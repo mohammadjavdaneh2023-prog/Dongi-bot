@@ -10,7 +10,7 @@ CREATE TABLE users (
 );
 CREATE UNIQUE INDEX one_owner ON users(role) WHERE role = 'OWNER';
 CREATE FUNCTION reject_public_id_change() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN IF NEW.public_id <> OLD.public_id THEN RAISE EXCEPTION 'immutable_public_id'; END IF; RETURN NEW; END $$;
+BEGIN IF NEW.public_id <> OLD.public_id THEN RAISE EXCEPTION 'immutable_public_id'; END IF; RETURN NEW; END; $$;
 CREATE TRIGGER immutable_public_id BEFORE UPDATE OF public_id ON users FOR EACH ROW EXECUTE FUNCTION reject_public_id_change();
 
 CREATE TABLE access_grants (
@@ -26,7 +26,7 @@ CREATE TABLE audit_events (
 );
 CREATE INDEX audit_by_target ON audit_events(target_user_id, created_at);
 CREATE INDEX audit_by_trace ON audit_events(trace_id);
-CREATE FUNCTION reject_audit_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit_append_only'; END $$;
+CREATE FUNCTION reject_audit_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit_append_only'; END; $$;
 CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_audit_mutation();
 CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_audit_mutation();
 
@@ -111,13 +111,13 @@ CREATE TABLE bank_transactions (
 );
 CREATE TABLE bank_receipts (transaction_id bigint NOT NULL REFERENCES bank_transactions(id), user_id text NOT NULL REFERENCES users(id), amount bigint NOT NULL CHECK(amount>=0), PRIMARY KEY(transaction_id,user_id));
 CREATE INDEX bank_transactions_by_bank ON bank_transactions(bank_id,id);
-CREATE FUNCTION reject_bank_structure_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'bank_structure_fixed'; END $$;
+CREATE FUNCTION reject_bank_structure_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'bank_structure_fixed'; END; $$;
 CREATE TRIGGER bank_structure_fixed BEFORE UPDATE OF name,manager_id,signature ON banks FOR EACH ROW EXECUTE FUNCTION reject_bank_structure_change();
 CREATE TRIGGER bank_members_fixed_update BEFORE UPDATE ON bank_members FOR EACH ROW EXECUTE FUNCTION reject_bank_structure_change();
 CREATE TRIGGER bank_members_fixed_delete BEFORE DELETE ON bank_members FOR EACH ROW EXECUTE FUNCTION reject_bank_structure_change();
-CREATE FUNCTION reject_late_bank_member() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF EXISTS(SELECT 1 FROM bank_transactions WHERE bank_id=NEW.bank_id) THEN RAISE EXCEPTION 'bank_structure_fixed'; END IF; RETURN NEW; END $$;
+CREATE FUNCTION reject_late_bank_member() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF EXISTS(SELECT 1 FROM bank_transactions WHERE bank_id=NEW.bank_id) THEN RAISE EXCEPTION 'bank_structure_fixed'; END IF; RETURN NEW; END; $$;
 CREATE TRIGGER bank_members_fixed_insert BEFORE INSERT ON bank_members FOR EACH ROW EXECUTE FUNCTION reject_late_bank_member();
-CREATE FUNCTION reject_bank_ledger_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'bank_append_only'; END $$;
+CREATE FUNCTION reject_bank_ledger_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'bank_append_only'; END; $$;
 CREATE TRIGGER bank_transaction_no_update BEFORE UPDATE ON bank_transactions FOR EACH ROW EXECUTE FUNCTION reject_bank_ledger_mutation();
 CREATE TRIGGER bank_transaction_no_delete BEFORE DELETE ON bank_transactions FOR EACH ROW EXECUTE FUNCTION reject_bank_ledger_mutation();
 CREATE TRIGGER bank_receipt_no_update BEFORE UPDATE ON bank_receipts FOR EACH ROW EXECUTE FUNCTION reject_bank_ledger_mutation();
