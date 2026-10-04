@@ -27,7 +27,7 @@ jobs:
     env:
       TEST_DATABASE_URL: postgresql://dongi_test:test-only-password@127.0.0.1:5432/dongi_test
       DATABASE_URL: postgresql://dongi_test:test-only-password@127.0.0.1:5432/dongi_test
-      APP_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      APP_ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
       GEMINI_API_KEY: ci-placeholder-not-used-for-network-requests
       APP_ENV: test
       APP_VERSION: ci
