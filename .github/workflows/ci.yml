@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17.6-bookworm
+        env:
+          POSTGRES_DB: dongi_test
+          POSTGRES_USER: dongi_test
+          POSTGRES_PASSWORD: test-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dongi_test -d dongi_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql://dongi_test:test-only-password@127.0.0.1:5432/dongi_test
+      DATABASE_URL: postgresql://dongi_test:test-only-password@127.0.0.1:5432/dongi_test
+      APP_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      APP_ENV: test
+      APP_VERSION: ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.9.0
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm run format:check
+      - run: npm run verify:secrets
+      - run: npm run migrate
+      - run: npm test
+      - run: docker build --tag dongi:ci .

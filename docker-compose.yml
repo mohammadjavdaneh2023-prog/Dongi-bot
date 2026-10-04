@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:17.6-bookworm
+    environment:
+      POSTGRES_DB: dongi
+      POSTGRES_USER: dongi
+      POSTGRES_PASSWORD: local-only-change-me
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dongi -d dongi"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - dongi-postgres:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  app:
+    build: .
+    init: true
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://dongi:local-only-change-me@postgres:5432/dongi
+      PORT: "3000"
+    ports:
+      - "127.0.0.1:3000:3000"
+    stop_grace_period: 45s
+
+volumes:
+  dongi-postgres:

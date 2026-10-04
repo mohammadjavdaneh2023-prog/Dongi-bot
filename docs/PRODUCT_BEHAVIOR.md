@@ -1,0 +1,52 @@
+# رفتار فعلی DONGI
+
+## مسیرهای اصلی کاربر
+
+1. مالک با `npm run bootstrap-owner` در دیتابیس خالی رزرو می‌شود و سپس در خصوصی `/start` می‌زند.
+2. مالک با `#DONGI user create "Name"` پروفایل و دعوت یک‌بارمصرف می‌سازد؛ کاربر دعوت را در خصوصی مصرف می‌کند.
+3. اعضای فعال در گروه فاکتور یا تسویه ثبت می‌کنند. عضویت Telegram و وضعیت حساب پیش از Commit بررسی می‌شود.
+4. Update، عملیات دامنه، Audit و پاسخ رمزگذاری‌شده در یک تراکنش ثبت می‌شوند. Update تکراری عملیات را دوباره اجرا نمی‌کند.
+5. outbox پاسخ را ارسال می‌کند. نتیجهٔ قطعی ثبت می‌شود؛ نتیجهٔ شبکه‌ای مبهم `AMBIGUOUS` می‌ماند و خودکار دوباره ارسال نمی‌شود.
+6. کاربر دادهٔ شخصی را از `/my` می‌خواند و در گروه تراز، جزئیات، بانک یا مدیریت مجاز را اجرا می‌کند.
+
+## فرمان‌های اصلی
+
+- `/start` و `/start TOKEN`
+- `/my balance|open|history|invoices|profile|aliases|banks|help [page]`
+- `#DONGI help`
+- `#DONGI user create "Name" [PUBLIC_ID]` و `#DONGI user invite PUBLIC_ID`
+- `#DONGI invoice ...`, `#DONGI settle ...`, `#DONGI balance`, `#DONGI settle-plan`
+- `#DONGI details [#REF]`, `#DONGI void [#REF]`, `#DONGI restore [#REF]`
+- `#DONGI alias PUBLIC_ID add|remove ALIAS`
+- `#DONGI freeze|unfreeze PUBLIC_ID`
+- `#DONGI user suspend|activate PUBLIC_ID`
+- `#DONGI bank create|charge|refund|spend|report ...`
+- پیام «هی دنگی ...» برای پیشنهاد AI؛ ثبت فقط پس از تأیید همان کاربر در همان گروه تا پنج دقیقه
+- `/ai-key status|set|enable|disable|delete` فقط در خصوصی
+
+## داده‌های پایدار
+
+PostgreSQL کاربران، دعوت‌ها، Aliasها، نقش‌ها و محدودیت‌های گروهی، فاکتورها و ردیف‌ها، تخصیص تسویه و تهاتر، بانک‌ها و گردش‌ها، Audit append-only، Updateهای پردازش‌شده، offset، pending AI، outbox ارسال، temporary messageها، receipt mapping و credential رمزگذاری‌شدهٔ AI را نگه می‌دارد.
+
+هیچ رسانه یا فایل کاربری پایدار تولید نمی‌شود. متن خام کاربر، prompt و پاسخ خام AI در log ذخیره نمی‌شوند.
+
+## سرویس‌های خارجی
+
+- Telegram Bot API برای polling، عضویت و ارسال/حذف پیام
+- Gemini API فقط با کلید شخصی همان کاربر و فقط هنگام قابلیت AI
+- PostgreSQL خارجی برای همهٔ داده‌های پایدار
+
+هیچ سرویس Cloudflare، Railway، S3 یا سرویس خارجی دیگری در مسیر فعلی لازم نیست.
+
+## قواعد مهم
+
+- یک Replica و یک polling consumer؛ PostgreSQL advisory lock اجرای هم‌زمان را رد می‌کند.
+- عملیات مالی و مدیریتی idempotent و Auditشده‌اند.
+- ارسال مبهم قابل retry خودکار نیست؛ اپراتور باید وضعیت را بررسی کند.
+- نقش Admin از Telegram تازه بررسی می‌شود. Owner هم محدودیت‌های عضویت عملیات بانکی را دور نمی‌زند.
+- AI فقط پیشنهاد می‌دهد؛ حسابداری، هویت، عضویت، zero-sum و تخصیص در کد کنترل می‌شوند.
+- BYOK مجوز دورزدن محدودیت منطقه‌ای یا شرایط provider نیست.
+
+## اختلاف اسناد قدیمی با کد
+
+نسخهٔ قبلی در برخی اسناد SQLite، log فایل‌محور، کلید Gemini سراسری و حذف پاسخ‌های pending هنگام restart را توصیف می‌کرد. آن اسناد حذف شدند؛ رفتار مرجع اکنون PostgreSQL، stdout JSON، BYOK و outbox پایدار/ambiguous-safe است. تست‌های کد منبع اصلی رفتارند.
