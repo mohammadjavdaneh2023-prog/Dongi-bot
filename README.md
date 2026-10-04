@@ -63,7 +63,7 @@ docker build -t dongi:local .
 - `GET /readyz`: آماده‌بودن برنامه، PostgreSQL، migration و Telegram initialization
 - `GET /version`: مقدار غیرمحرمانهٔ `APP_VERSION`
 
-پورت پیش‌فرض `3000` است. Startup ابتدا migration را تراکنشی اجرا می‌کند و فقط بعد از آماده‌شدن Telegram، `/readyz` پاسخ `200` می‌دهد.
+پورت پیش‌فرض `3000` است. Startup ابتدا migration را تراکنشی اجرا می‌کند و فقط بعد از آماده‌شدن Telegram، `/readyz` پاسخ `200` می‌دهد. هنگام انتشار rolling، نسخهٔ جدید در همین وضعیت Ready منتظر advisory lock اختصاصی polling می‌ماند؛ پس از توقف نسخهٔ قبلی قفل را می‌گیرد و polling را آغاز می‌کند، بدون اینکه دو مصرف‌کننده هم‌زمان فعال شوند.
 
 ## تنظیمات
 

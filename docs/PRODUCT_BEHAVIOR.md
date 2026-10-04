@@ -39,7 +39,7 @@ PostgreSQL کاربران، دعوت‌ها، Aliasها، نقش‌ها و مح�
 
 ## قواعد مهم
 
-- یک Replica و یک polling consumer؛ PostgreSQL advisory lock اجرای هم‌زمان را رد می‌کند.
+- یک polling consumer؛ PostgreSQL advisory lock روی اتصال اختصاصی، handoff نسخه‌ها را بدون polling هم‌زمان انجام می‌دهد. Replica جایگزین هنگام rolling release در حالت Ready منتظر آزادشدن قفل می‌ماند.
 - عملیات مالی و مدیریتی idempotent و Auditشده‌اند.
 - ارسال مبهم قابل retry خودکار نیست؛ اپراتور باید وضعیت را بررسی کند.
 - نقش Admin از Telegram تازه بررسی می‌شود. Owner هم محدودیت‌های عضویت عملیات بانکی را دور نمی‌زند.

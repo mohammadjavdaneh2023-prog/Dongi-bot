@@ -10,7 +10,15 @@ types.setTypeParser(1700, value => {
 });
 let client;
 let testSchema;
+let closing = false;
+let connectionLossReported = false;
 const testTriggers = new Map();
+
+function reportConnectionLoss() {
+  if (closing || connectionLossReported) return;
+  connectionLossReported = true;
+  parentPort.postMessage({ event: 'connection_lost' });
+}
 
 function placeholders(sql) {
   let index = 0;
@@ -77,6 +85,8 @@ parentPort.on('message', async ({ shared, operation, sql, params = [], databaseU
   try {
     if (operation === 'connect') {
       client = new Client({ connectionString: databaseUrl, application_name: 'dongi', connectionTimeoutMillis: 5000, statement_timeout: 5000, query_timeout: 10000 });
+      client.on('error', reportConnectionLoss);
+      client.on('end', reportConnectionLoss);
       await client.connect();
       if (schema) {
         testSchema = schema;
@@ -95,6 +105,7 @@ parentPort.on('message', async ({ shared, operation, sql, params = [], databaseU
       return write(shared, { ok: true });
     }
     if (operation === 'close') {
+      closing = true;
       if (testSchema) await client.query(`DROP SCHEMA ${testSchema} CASCADE`);
       await client.end();
       return write(shared, { closed: true });

@@ -36,17 +36,59 @@ class Database {
     this.worker = new Worker(new URL('./postgres-worker.js', import.meta.url));
     this.isTransaction = false;
     this.closed = false;
+    this.connectionLost = false;
+    this.disconnectWaiters = new Set();
+    this.worker.on('message', message => {
+      if (message?.event === 'connection_lost') this.markConnectionLost();
+    });
+    this.worker.on('error', () => this.markConnectionLost());
+    this.worker.on('exit', () => { if (!this.closed) this.markConnectionLost(); });
     const schema = test ? `dongi_test_${randomBytes(8).toString('hex')}` : undefined;
     rpc(this.worker, 'connect', { databaseUrl, schema });
   }
+  markConnectionLost() {
+    if (this.connectionLost || this.closed) return;
+    this.connectionLost = true;
+    for (const resolve of this.disconnectWaiters) resolve(true);
+    this.disconnectWaiters.clear();
+  }
+  assertAvailable() {
+    if (this.closed) throw new Error('DB_CLOSED');
+    if (this.connectionLost) throw new Error('DB_CONNECTION_LOST');
+  }
   prepare(sql) { return new PreparedStatement(this, sql); }
-  query(sql, params = []) { return rpc(this.worker, 'query', { sql, params }); }
-  exec(sql) { return rpc(this.worker, 'exec', { sql }); }
+  query(sql, params = []) { this.assertAvailable(); return rpc(this.worker, 'query', { sql, params }); }
+  exec(sql) { this.assertAvailable(); return rpc(this.worker, 'exec', { sql }); }
+  waitForDisconnect(signal) {
+    if (this.connectionLost) return Promise.resolve(true);
+    if (signal?.aborted) return Promise.resolve(false);
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = value => {
+        if (settled) return;
+        settled = true;
+        this.disconnectWaiters.delete(onDisconnect);
+        signal?.removeEventListener('abort', onAbort);
+        resolve(value);
+      };
+      const onDisconnect = value => finish(value);
+      const onAbort = () => finish(false);
+      this.disconnectWaiters.add(onDisconnect);
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  }
   close() {
     if (this.closed) return;
-    rpc(this.worker, 'close');
-    this.worker.terminate();
     this.closed = true;
+    for (const resolve of this.disconnectWaiters) resolve(false);
+    this.disconnectWaiters.clear();
+    try {
+      if (!this.connectionLost) rpc(this.worker, 'close');
+    } catch {
+      this.connectionLost = true;
+    } finally {
+      this.worker.terminate();
+    }
   }
 }
 
