@@ -43,7 +43,8 @@ test('partial netting leaves only net open balance and retains initial zero row'
   const f=setup(t);
   await f.send('#DONGI invoice "a"\nAB123 +100\nCD456 -100\nEF789 0');
   await f.send('#DONGI invoice "b"\nAB123 -70\nCD456 +70');
-  assert.deepEqual(f.db.prepare('SELECT open_amount FROM invoice_entries ORDER BY rowid').all().map(row=>row.open_amount),[30,-30,0,0,0]);
+  assert.deepEqual(f.db.prepare(`SELECT e.open_amount FROM invoice_entries e JOIN invoices i ON i.id=e.invoice_id
+    ORDER BY i.public_ref,e.position`).all().map(row=>row.open_amount),[30,-30,0,0,0]);
   assert.equal(f.db.prepare('SELECT count(*) n FROM invoices').get().n,2);
 });
 test('netting persistence or audit failure rolls back the new invoice and changes to existing rows',async t=>{
@@ -56,7 +57,8 @@ test('netting persistence or audit failure rolls back the new invoice and change
     assert.equal((await f.send('#DONGI invoice "b"\nAB123 -70\nCD456 +70')).result.event,'DB_TRANSACTION_FAILED');
     assert.equal(f.db.prepare('SELECT count(*) n FROM invoices').get().n,1);
     assert.equal(f.db.prepare('SELECT count(*) n FROM netting_allocations').get().n,0);
-    assert.deepEqual(f.db.prepare('SELECT open_amount FROM invoice_entries ORDER BY rowid').all().map(row=>row.open_amount),[100,-100]);
+    assert.deepEqual(f.db.prepare(`SELECT e.open_amount FROM invoice_entries e JOIN invoices i ON i.id=e.invoice_id
+      ORDER BY i.public_ref,e.position`).all().map(row=>row.open_amount),[100,-100]);
   }
 });
 test('netting order is deterministic newest-first and never mutates input',()=>{

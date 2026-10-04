@@ -26,7 +26,9 @@ export function syncMembership(db, update) {
       ON CONFLICT(telegram_chat_id, telegram_user_id) DO UPDATE SET
         telegram_status = excluded.telegram_status, is_member = excluded.is_member,
         event_date = excluded.event_date, update_id = excluded.update_id, last_verified_at = excluded.last_verified_at
-      WHERE excluded.event_date > event_date OR (excluded.event_date = event_date AND excluded.update_id > update_id)`);
+      WHERE excluded.event_date > group_membership_cache.event_date
+        OR (excluded.event_date = group_membership_cache.event_date
+          AND excluded.update_id > group_membership_cache.update_id)`);
     for (const change of changes) insert.run(String(chat.id), String(change.id), change.status, Number(change.active), date, update.update_id, Date.now());
   });
   return true;

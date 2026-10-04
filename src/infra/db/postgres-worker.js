@@ -3,6 +3,11 @@ import pg from 'pg';
 
 const { Client, types } = pg;
 types.setTypeParser(20, value => Number(value));
+types.setTypeParser(1700, value => {
+  if (!/^-?\d+$/.test(value)) return value;
+  const number = Number(value);
+  return Number.isSafeInteger(number) ? number : value;
+});
 let client;
 let testSchema;
 const testTriggers = new Map();

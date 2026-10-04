@@ -55,5 +55,6 @@ test('restore rechecks opposite balances and nets atomically',async t=>{
  await f.send('#DONGI invoice "y"\nAB123 -40\nCD456 +40');
  assert.equal((await f.send('#DONGI restore #1')).result.event,'INVOICE_RESTORED');
  assert.equal(f.db.prepare('SELECT count(*) n FROM netting_allocations').get().n,2);
- assert.deepEqual(f.db.prepare('SELECT open_amount FROM invoice_entries ORDER BY rowid').all().map(row=>row.open_amount),[60,-60,0,0]);
+ assert.deepEqual(f.db.prepare(`SELECT e.open_amount FROM invoice_entries e JOIN invoices i ON i.id=e.invoice_id
+   ORDER BY i.public_ref,e.position`).all().map(row=>row.open_amount),[60,-60,0,0]);
 });
