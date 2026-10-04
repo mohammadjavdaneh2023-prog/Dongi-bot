@@ -18,7 +18,7 @@ export function acceptedMessage(message,bot){
  const start=text.match(/^\/start(?:@([A-Za-z0-9_]+))?(?:\s+\S+)?$/i);
  return classifyTrigger({kind:'message',chatType:message.chat?.type,text,
   directReplyToBot:message.reply_to_message?.from?.id===bot.id,
-  inPrivateFlow:Boolean((start&&(!start[1]||start[1].toLowerCase()===bot.username.toLowerCase()))||/^#dongi(?![\p{L}\p{N}_])/iu.test(text)||privateRequest(text)||(message.chat?.type==='private'&&/^\/ai-key(?:@\w+)?(?:\s|$)/i.test(text)))})!=='DROP';
+  inPrivateFlow:Boolean((start&&(!start[1]||start[1].toLowerCase()===bot.username.toLowerCase()))||/^#dongi(?![\p{L}\p{N}_])/iu.test(text)||privateRequest(text))})!=='DROP';
 }
 
 export async function cleanupTemporary({db,telegram}){
@@ -38,7 +38,7 @@ export async function beginSession(deps){
 }
 
 export async function pollOnce(deps) {
- const {db,telegram,router,cipher,log,bot,aiCredentials}=deps;
+ const {db,telegram,router,cipher,log,bot,ai}=deps;
  const deliver=()=>deliverOutbox({db,telegram,cipher,log});
  await deliver();await cleanupTemporary(deps);
  const offset=Number(db.prepare("SELECT value FROM runtime_state WHERE key='offset'").get()?.value??0);
@@ -78,7 +78,6 @@ export async function pollOnce(deps) {
     const boundedAi=ai?{...ai,gateway:{run:(kind,task)=>ai.gateway.run(kind,s=>task(AbortSignal.any([s,signal])))}}:undefined;
     let prepared;
     try{
-     const ai=aiCredentials?.runtimeForTelegramUser(message.from?.id);
      if(!duplicate)prepared=await withSignal(signal,async()=>
       await prepareConversation(db,boundedTelegram,routed,boundedAi,bot)
       ??await prepareAi(db,boundedTelegram,routed,boundedAi)
@@ -93,9 +92,6 @@ export async function pollOnce(deps) {
      const result=router(routed,prepared);
      if(result.fallback)await telegram.call('sendMessage',result.fallback);
      await deliver();
-     if(message.chat?.type==='private'&&/^\/ai-key(?:@\w+)?\s+set\s+/i.test(message.text??'')){
-      try{await telegram.call('deleteMessage',{chat_id:String(message.chat.id),message_id:message.message_id});}catch{/* Best-effort removal of the credential message. */}
-     }
     }
     if(temporary)await cleanupTemporary(deps);
    }

@@ -22,18 +22,17 @@
 - `#DONGI user suspend|activate PUBLIC_ID`
 - `#DONGI bank create|charge|refund|spend|report ...`
 - پیام «هی دنگی ...» برای پیشنهاد AI؛ ثبت فقط پس از تأیید همان کاربر در همان گروه تا پنج دقیقه
-- `/ai-key status|set|enable|disable|delete` فقط در خصوصی
 
 ## داده‌های پایدار
 
-PostgreSQL کاربران، دعوت‌ها، Aliasها، نقش‌ها و محدودیت‌های گروهی، فاکتورها و ردیف‌ها، تخصیص تسویه و تهاتر، بانک‌ها و گردش‌ها، Audit append-only، Updateهای پردازش‌شده، offset، pending AI، outbox ارسال، temporary messageها، receipt mapping و credential رمزگذاری‌شدهٔ AI را نگه می‌دارد.
+PostgreSQL کاربران، دعوت‌ها، Aliasها، نقش‌ها و محدودیت‌های گروهی، فاکتورها و ردیف‌ها، تخصیص تسویه و تهاتر، بانک‌ها و گردش‌ها، Audit append-only، Updateهای پردازش‌شده، offset، pending AI، outbox ارسال، temporary messageها و receipt mapping را نگه می‌دارد.
 
 هیچ رسانه یا فایل کاربری پایدار تولید نمی‌شود. متن خام کاربر، prompt و پاسخ خام AI در log ذخیره نمی‌شوند.
 
 ## سرویس‌های خارجی
 
 - Telegram Bot API برای polling، عضویت و ارسال/حذف پیام
-- Gemini API فقط با کلید شخصی همان کاربر و فقط هنگام قابلیت AI
+- Gemini API با یک کلید داخلی سراسری که مالک محصول در Secretهای میزبان تنظیم می‌کند
 - PostgreSQL خارجی برای همهٔ داده‌های پایدار
 
 هیچ سرویس Cloudflare، Railway، S3 یا سرویس خارجی دیگری در مسیر فعلی لازم نیست.
@@ -45,8 +44,8 @@ PostgreSQL کاربران، دعوت‌ها، Aliasها، نقش‌ها و مح�
 - ارسال مبهم قابل retry خودکار نیست؛ اپراتور باید وضعیت را بررسی کند.
 - نقش Admin از Telegram تازه بررسی می‌شود. Owner هم محدودیت‌های عضویت عملیات بانکی را دور نمی‌زند.
 - AI فقط پیشنهاد می‌دهد؛ حسابداری، هویت، عضویت، zero-sum و تخصیص در کد کنترل می‌شوند.
-- BYOK مجوز دورزدن محدودیت منطقه‌ای یا شرایط provider نیست.
+- کاربران به کلید داخلی AI دسترسی ندارند و نیازی به ارائهٔ کلید شخصی ندارند.
 
 ## اختلاف اسناد قدیمی با کد
 
-نسخهٔ قبلی در برخی اسناد SQLite، log فایل‌محور، کلید Gemini سراسری و حذف پاسخ‌های pending هنگام restart را توصیف می‌کرد. آن اسناد حذف شدند؛ رفتار مرجع اکنون PostgreSQL، stdout JSON، BYOK و outbox پایدار/ambiguous-safe است. تست‌های کد منبع اصلی رفتارند.
+نسخهٔ قبلی در برخی اسناد SQLite، log فایل‌محور و حذف پاسخ‌های pending هنگام restart را توصیف می‌کرد. آن اسناد حذف شدند؛ رفتار مرجع اکنون PostgreSQL، stdout JSON، کلید AI داخلی سراسری و outbox پایدار/ambiguous-safe است. تست‌های کد منبع اصلی رفتارند.

@@ -111,12 +111,6 @@ CREATE TABLE bank_transactions (
 );
 CREATE TABLE bank_receipts (transaction_id bigint NOT NULL REFERENCES bank_transactions(id), user_id text NOT NULL REFERENCES users(id), amount bigint NOT NULL CHECK(amount>=0), PRIMARY KEY(transaction_id,user_id));
 CREATE INDEX bank_transactions_by_bank ON bank_transactions(bank_id,id);
-CREATE TABLE user_ai_credentials (
-  user_id text NOT NULL REFERENCES users(id), provider text NOT NULL, encrypted_api_key text NOT NULL,
-  enabled smallint NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)), created_at bigint NOT NULL, updated_at bigint NOT NULL,
-  PRIMARY KEY(user_id,provider)
-);
-
 CREATE FUNCTION reject_bank_structure_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'bank_structure_fixed'; END $$;
 CREATE TRIGGER bank_structure_fixed BEFORE UPDATE OF name,manager_id,signature ON banks FOR EACH ROW EXECUTE FUNCTION reject_bank_structure_change();
 CREATE TRIGGER bank_members_fixed_update BEFORE UPDATE ON bank_members FOR EACH ROW EXECUTE FUNCTION reject_bank_structure_change();

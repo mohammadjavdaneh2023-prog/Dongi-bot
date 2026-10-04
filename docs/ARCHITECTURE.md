@@ -8,6 +8,6 @@ Startup migrationها را زیر advisory lock و در تراکنش اجرا م
 
 outbox قبل از فراخوانی Telegram به `SENDING` می‌رود. پاسخ موفق `SENT` است. شکست قطعی قابل retry به `PENDING` برمی‌گردد؛ شکست شبکه/5xx که نتیجه‌اش نامعلوم است `AMBIGUOUS` می‌شود. اگر process دقیقاً پس از تغییر به `SENDING` متوقف شود، همان وضعیت نیز برای بررسی انسانی حفظ می‌شود و کورکورانه ارسال مجدد نمی‌شود.
 
-`APP_ENCRYPTION_KEY` کلید اصلی است و برای outbox و credentialهای AI کلیدهای purpose-specific مشتق می‌شوند. تغییر این کلید بدون برنامهٔ rotation دادهٔ رمزگذاری‌شده را غیرقابل‌خواندن می‌کند.
+`APP_ENCRYPTION_KEY` کلید اصلی رمزگذاری outbox است. تغییر آن بدون برنامهٔ rotation، payloadهای ارسال‌نشده را غیرقابل‌خواندن می‌کند. `GEMINI_API_KEY` یک Secret مستقل و سراسری است و هرگز در PostgreSQL یا log نوشته نمی‌شود.
 
 کانتینر هیچ volume برنامه‌ای ندارد. PostgreSQL خارج از کانتینر است. چون محصول فایل دائمی ندارد، S3 اضافه نشده است.

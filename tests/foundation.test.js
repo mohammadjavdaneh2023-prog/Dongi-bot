@@ -31,9 +31,9 @@ test('private, service and callback gates require explicit context', () => {
 });
 test('config rejects invalid limits without echoing values', () => {
   for (const value of ['0', '-1', '1.5', 'secret', '9007199254740992']) {
-    assert.throws(() => loadConfig({ DATABASE_URL:'postgresql://localhost/dongi', APP_ENCRYPTION_KEY:'0'.repeat(64), PORT: value }), { message: 'Invalid configuration: PORT' });
+    assert.throws(() => loadConfig({ DATABASE_URL:'postgresql://localhost/dongi', APP_ENCRYPTION_KEY:'0'.repeat(64), GEMINI_API_KEY:'test-key', PORT: value }), { message: 'Invalid configuration: PORT' });
   }
-  assert.equal(loadConfig({DATABASE_URL:'postgresql://localhost/dongi',APP_ENCRYPTION_KEY:'0'.repeat(64)}).port, 3000);
+  assert.equal(loadConfig({DATABASE_URL:'postgresql://localhost/dongi',APP_ENCRYPTION_KEY:'0'.repeat(64),GEMINI_API_KEY:'test-key'}).port, 3000);
 });
 test('logs correlate traces, omit raw content and write structured JSON to stdout', () => {
   const original=process.stdout.write;let raw='';process.stdout.write=value=>{raw+=value;return true;};

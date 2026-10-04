@@ -7,7 +7,7 @@ import { DomainError } from '../src/domain/errors.js';
 
 let db;
 try {
-  const config = loadConfig();
+  const config = loadConfig(process.env, { requireRuntimeSecrets: false });
   const ownerTelegramId = process.env.OWNER_TELEGRAM_ID;
   const name = process.env.OWNER_NAME;
   if (!ownerTelegramId || !name) throw new DomainError('OWNER_CONFIG_REQUIRED');

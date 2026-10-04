@@ -22,7 +22,7 @@ import {operateBank} from '../repositories/banks.js';
 const prefix = /^#dongi(?![\p{L}\p{N}_])/iu;
 const safeId = value => Number.isSafeInteger(value);
 
-export function createRouter({ db, cipher, bot, config, log, aiCredentials }) {
+export function createRouter({ db, cipher, bot, config, log }) {
   // Logging failure must never turn a committed operation into a reported rollback.
   const safeLog = (...args) => { try { log(...args); } catch { process.stderr.write('LOG_WRITE_FAILED\n'); } };
   const render = (event, vars, role) => renderResponse(db, event, vars, role);
@@ -38,10 +38,9 @@ export function createRouter({ db, cipher, bot, config, log, aiCredentials }) {
     const start = text.match(/^\/start(?:@([A-Za-z0-9_]+))?(?:\s+(\S+))?$/i);
     const addressedStart = start && (!start[1] || start[1].toLowerCase() === bot.username.toLowerCase());
     const privateView=message.chat.type==='private'?privateRequest(text):null;
-    const privateAiKey=message.chat.type==='private'&&/^\/ai-key(?:@\w+)?(?:\s|$)/i.test(text);
     const routeKind = classifyTrigger({
       kind: 'message', chatType: message.chat.type, text,
-      inPrivateFlow: Boolean(addressedStart || prefix.test(text) || privateView || privateAiKey),
+      inPrivateFlow: Boolean(addressedStart || prefix.test(text) || privateView),
       directReplyToBot: message.reply_to_message?.from?.id === bot.id,
     });
     if (routeKind === 'DROP') return { dropped: true };
@@ -66,15 +65,6 @@ export function createRouter({ db, cipher, bot, config, log, aiCredentials }) {
       const actor = repository.byTelegram(String(message.from.id));
       const role = actor?.role ?? 'GENERAL';
       const response = (event, vars = {}) => ({ event, responses: [{ chatId: message.chat.id, text: render(event, vars, role) }] });
-      if(privateAiKey){
-        const result=aiCredentials.manage(message.from.id,text);
-        const messages={AI_KEY_SAVED:'کلید AI شما با رمزگذاری ذخیره و فعال شد.',AI_KEY_DELETED:'کلید AI شما حذف شد.',
-          AI_KEY_DISABLED:'کلید AI شما غیرفعال شد.',AI_KEY_ENABLED:'کلید AI شما فعال شد.',AI_KEY_ACTIVE:'کلید AI شما فعال است.',
-          AI_KEY_INACTIVE:'کلید AI شما ذخیره است اما غیرفعال است.',AI_KEY_NOT_CONFIGURED:'هنوز کلید AI ثبت نکرده‌اید.',
-          AI_KEY_INVALID:'کلید معتبر نیست.',AI_KEY_COMMAND_INVALID:'دستور نامعتبر است. از /ai-key status|set|enable|disable|delete استفاده کنید.',
-          ONBOARDING_REQUIRED:'ابتدا Bot را Start کنید.'};
-        return {event:result.code,responses:[{chatId:message.chat.id,text:messages[result.code]??messages.AI_KEY_COMMAND_INVALID}]};
-      }
       if(preparedInvoice?.error)throw new DomainError(preparedInvoice.error,preparedInvoice.details);
       if(privateView) {
         const view=dashboard(db,actor,privateView);
