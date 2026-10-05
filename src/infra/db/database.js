@@ -5,16 +5,23 @@ import { DomainError } from '../../domain/errors.js';
 
 const migrations = [new URL('./migrations/001_initial_postgresql.sql', import.meta.url)];
 const responseBytes = 16 * 1024 * 1024;
+const responseBufferBytes = 12 + responseBytes;
+const decoder = new TextDecoder();
+let activeDatabaseCount = 0;
+let activeWorkerCount = 0;
+let activeDisconnectWaiterCount = 0;
 
-function rpc(worker, operation, payload = {}) {
-  const shared = new SharedArrayBuffer(12 + responseBytes);
+function rpc(worker, shared, operation, payload = {}) {
   const header = new Int32Array(shared, 0, 3);
+  Atomics.store(header, 0, 0);
+  Atomics.store(header, 1, 0);
+  Atomics.store(header, 2, 0);
   worker.postMessage({ shared, operation, ...payload });
   const status = Atomics.wait(header, 0, 0, 30000);
   if (status === 'timed-out') throw new Error('DB_OPERATION_TIMEOUT');
   const length = Atomics.load(header, 1);
   const failed = Atomics.load(header, 2) === 1;
-  const text = new TextDecoder().decode(new Uint8Array(shared, 12, length));
+  const text = decoder.decode(new Uint8Array(shared, 12, length));
   const value = JSON.parse(text);
   if (failed) throw Object.assign(new Error(value.code), value);
   return value;
@@ -33,18 +40,39 @@ class PreparedStatement {
 
 class Database {
   constructor(databaseUrl, { test = false } = {}) {
+    this.shared = new SharedArrayBuffer(responseBufferBytes);
     this.worker = new Worker(new URL('./postgres-worker.js', import.meta.url));
     this.isTransaction = false;
     this.closed = false;
+    this.closePromise = undefined;
     this.connectionLost = false;
     this.disconnectWaiters = new Set();
+    this.active = true;
+    activeDatabaseCount += 1;
+    activeWorkerCount += 1;
     this.worker.on('message', message => {
       if (message?.event === 'connection_lost') this.markConnectionLost();
     });
     this.worker.on('error', () => this.markConnectionLost());
-    this.worker.on('exit', () => { if (!this.closed) this.markConnectionLost(); });
+    this.worker.on('exit', () => {
+      activeWorkerCount -= 1;
+      if (!this.closed) this.markConnectionLost();
+      this.releaseDatabase();
+    });
     const schema = test ? `dongi_test_${randomBytes(8).toString('hex')}` : undefined;
-    rpc(this.worker, 'connect', { databaseUrl, schema });
+    try { rpc(this.worker, this.shared, 'connect', { databaseUrl, schema }); }
+    catch (error) {
+      this.closed = true;
+      this.connectionLost = true;
+      this.releaseDatabase();
+      this.closePromise = this.worker.terminate().then(() => { this.worker.removeAllListeners(); });
+      throw error;
+    }
+  }
+  releaseDatabase() {
+    if (!this.active) return;
+    this.active = false;
+    activeDatabaseCount -= 1;
   }
   markConnectionLost() {
     if (this.connectionLost || this.closed) return;
@@ -57,8 +85,19 @@ class Database {
     if (this.connectionLost) throw new Error('DB_CONNECTION_LOST');
   }
   prepare(sql) { return new PreparedStatement(this, sql); }
-  query(sql, params = []) { this.assertAvailable(); return rpc(this.worker, 'query', { sql, params }); }
-  exec(sql) { this.assertAvailable(); return rpc(this.worker, 'exec', { sql }); }
+  call(operation, payload = {}) {
+    this.assertAvailable();
+    try { return rpc(this.worker, this.shared, operation, payload); }
+    catch (error) {
+      if (error.message === 'DB_OPERATION_TIMEOUT') {
+        this.markConnectionLost();
+        void this.worker.terminate();
+      }
+      throw error;
+    }
+  }
+  query(sql, params = []) { return this.call('query', { sql, params }); }
+  exec(sql) { return this.call('exec', { sql }); }
   waitForDisconnect(signal) {
     if (this.connectionLost) return Promise.resolve(true);
     if (signal?.aborted) return Promise.resolve(false);
@@ -67,29 +106,36 @@ class Database {
       const finish = value => {
         if (settled) return;
         settled = true;
-        this.disconnectWaiters.delete(onDisconnect);
+        if (this.disconnectWaiters.delete(onDisconnect)) activeDisconnectWaiterCount -= 1;
         signal?.removeEventListener('abort', onAbort);
         resolve(value);
       };
       const onDisconnect = value => finish(value);
       const onAbort = () => finish(false);
       this.disconnectWaiters.add(onDisconnect);
+      activeDisconnectWaiterCount += 1;
       signal?.addEventListener('abort', onAbort, { once: true });
     });
   }
   close() {
-    if (this.closed) return;
+    if (this.closePromise) return this.closePromise;
     this.closed = true;
     for (const resolve of this.disconnectWaiters) resolve(false);
     this.disconnectWaiters.clear();
     try {
-      if (!this.connectionLost) rpc(this.worker, 'close');
+      if (!this.connectionLost) rpc(this.worker, this.shared, 'close');
     } catch {
       this.connectionLost = true;
-    } finally {
-      this.worker.terminate();
     }
+    this.releaseDatabase();
+    this.closePromise = this.worker.terminate().then(() => { this.worker.removeAllListeners(); });
+    return this.closePromise;
   }
+}
+
+export function databaseDiagnostics() {
+  return { activeDatabases: activeDatabaseCount, activeWorkers: activeWorkerCount,
+    activeDisconnectWaiters: activeDisconnectWaiterCount };
 }
 
 function applyMigrations(db) {
@@ -115,7 +161,7 @@ export function openDatabase(databaseUrl) {
   if (!url || !/^postgres(?:ql)?:\/\//i.test(url)) throw new Error(test ? 'TEST_DATABASE_URL_REQUIRED' : 'DATABASE_URL_REQUIRED');
   const db = new Database(url, { test });
   try { applyMigrations(db); return db; }
-  catch (error) { db.close(); throw error; }
+  catch (error) { void db.close(); throw error; }
 }
 
 export function migrationsCurrent(db) {

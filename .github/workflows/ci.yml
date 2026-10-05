@@ -42,5 +42,6 @@ jobs:
       - run: npm run format:check
       - run: npm run verify:secrets
       - run: npm run migrate
+      - run: npm run test:pressure
       - run: npm test
       - run: docker build --tag dongi:ci .

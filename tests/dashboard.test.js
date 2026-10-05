@@ -44,6 +44,17 @@ test('start supplies keyboard, unlinked users get a response and group buttons a
  assert.equal((await f.send('/my balance AB123')).result.event,'PARSE_FAILED');
  assert.equal((await f.send('حساب من',10,true)).result.dropped,true);
 });
+test('reply menu can be dismissed and reopened with /menu',async t=>{
+ const f=setup(t);
+ const opened=await f.send('/menu');
+ assert.equal(opened.payload.reply_markup.is_persistent,false);
+ assert.ok(opened.payload.reply_markup.keyboard.flat().includes('بستن منو'));
+ const closed=await f.send('بستن منو');
+ assert.deepEqual(closed.payload.reply_markup,{remove_keyboard:true});
+ assert.match(closed.payload.text,/\/menu/);
+ const reopened=await f.send('/menu');
+ assert.ok(reopened.payload.reply_markup.keyboard.flat().includes('حساب من'));
+});
 test('read-only dashboard remains available for frozen and suspended users',async t=>{
  const f=setup(t);
  for(const status of ['FROZEN','SUSPENDED']){

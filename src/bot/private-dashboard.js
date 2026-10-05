@@ -4,8 +4,11 @@ import { renderResponse } from './responses.js';
 const views = { 'بانک‌های من':'banks', 'حساب من':'balance', 'ریزحساب باز':'open', 'تاریخچه':'history', 'فاکتورهای من':'invoices', 'پروفایل من':'profile', 'نام‌های مستعار':'aliases', 'راهنما':'help' };
 const labels = { banks:'بانک‌های من',balance:'حساب من',open:'ریزحساب باز',history:'تاریخچه',invoices:'فاکتورهای من',profile:'پروفایل من',aliases:'نام‌های مستعار',help:'راهنما' };
 
-export function privateRequest(text) {
+export function privateRequest(text,botUsername) {
   if (views[text]) return {view:views[text],page:1};
+  if (text==='بستن منو') return {close:true};
+  const menu=text.match(/^\/menu(?:@([A-Za-z0-9_]+))?$/i);
+  if (menu && (!menu[1] || !botUsername || menu[1].toLowerCase()===botUsername.toLowerCase())) return {view:'profile',page:1};
   if (!/^\/my(?:\s|$)/i.test(text)) return null;
   const match=text.match(/^\/my(?:\s+(banks|balance|open|history|invoices|profile|aliases|help))?(?:\s+([1-9]\d{0,5}))?$/i);
   return match ? {view:(match[1]??'profile').toLowerCase(),page:Number(match[2]??1)} : {invalid:true};
@@ -59,10 +62,10 @@ export function dashboard(db,actor,request) {
     if(!rows.length)lines.push(renderResponse(db,'PRIVATE_LIST_EMPTY'));
     lines.push(`صفحه: ${page}`);
   }
-  const keyboard=[['حساب من','ریزحساب باز'],['تاریخچه','فاکتورهای من'],['پروفایل من','نام‌های مستعار'],['بانک‌های من','راهنما']];
+  const keyboard=[['حساب من','ریزحساب باز'],['تاریخچه','فاکتورهای من'],['پروفایل من','نام‌های مستعار'],['بانک‌های من','راهنما'],['بستن منو']];
   const navigation=[];
   if(page>1)navigation.push(`/my ${view} ${page-1}`);
   if(hasNext)navigation.push(`/my ${view} ${page+1}`);
   if(navigation.length)keyboard.unshift(navigation);
-  return {event:'PRIVATE_VIEW_READY',text:lines.join('\n'),replyMarkup:{keyboard,resize_keyboard:true,is_persistent:true}};
+  return {event:'PRIVATE_VIEW_READY',text:lines.join('\n'),replyMarkup:{keyboard,resize_keyboard:true,is_persistent:false}};
 }

@@ -5,7 +5,7 @@ import { createPurposeCipher } from '../src/infra/outbox.js';
 import { createTelegramClient } from '../src/infra/telegram.js';
 import { seedResponses } from '../src/bot/responses.js';
 import { createRouter } from '../src/bot/router.js';
-import { runPolling } from '../src/bot/poller.js';
+import { cleanupTemporary, runPolling } from '../src/bot/poller.js';
 import { createHealthServer } from '../src/infra/health.js';
 import { createAiRuntime } from '../src/infra/ai-runtime.js';
 import { runWithPollingLock } from '../src/infra/polling-lock.js';
@@ -13,6 +13,9 @@ import { runWithPollingLock } from '../src/infra/polling-lock.js';
 let db;
 let lockDb;
 let health;
+let memoryTimer;
+let telegram;
+let log;
 const state = { started: false, db: undefined, telegramReady: false };
 const shutdown = new AbortController();
 
@@ -22,13 +25,13 @@ process.once('SIGTERM', stop);
 
 try {
   const config = loadConfig();
-  const log = createLogger(config);
+  log = createLogger(config);
   health = createHealthServer({ port: config.port, version: config.appVersion, readiness: () => state });
   db = openDatabase(config.databaseUrl);
   state.db = db;
   if (!db.prepare("SELECT id FROM users WHERE role='OWNER'").get()) throw new Error('OWNER_CONFIG_REQUIRED');
   const cipher = createPurposeCipher(config.encryptionKey, 'outbox');
-  const telegram = createTelegramClient(process.env.TELEGRAM_BOT_TOKEN);
+  telegram = createTelegramClient(process.env.TELEGRAM_BOT_TOKEN);
   const keyCheck = db.prepare("SELECT value FROM runtime_state WHERE key='encryption_key_check'").get();
   if (keyCheck) {
     if (cipher.decrypt(keyCheck.value) !== 'DONGI') throw new Error('INVALID_APP_ENCRYPTION_KEY');
@@ -43,11 +46,21 @@ try {
   state.telegramReady = true;
   state.started = true;
   lockDb = openDatabase(config.databaseUrl);
+  const logMemory = () => {
+    const { rss, heapUsed, external, arrayBuffers } = process.memoryUsage();
+    log('PROCESS_MEMORY', newTraceId(), {
+      stage: 'RUNTIME', rss_bytes: rss, heap_used_bytes: heapUsed,
+      external_bytes: external, array_buffers_bytes: arrayBuffers,
+    });
+  };
+  logMemory();
+  memoryTimer = setInterval(logMemory, 60_000);
+  memoryTimer.unref();
   await runWithPollingLock({
     db: lockDb,
     shutdownSignal: shutdown.signal,
     onWaiting: () => log('POLLING_LOCK_WAITING', newTraceId(), { stage: 'POLL' }),
-    onAcquired: () => log('BOT_STARTED', newTraceId(), { stage: 'POLL' }),
+    onAcquired: () => log('BOT_STARTED', newTraceId(), { stage: 'POLL', process_id: process.pid }),
     onLockLost: () => { state.started = false; },
     run: pollingSignal => runPolling(
       { db, telegram, router, cipher, log, bot, ai, shutdownSignal: pollingSignal },
@@ -59,7 +72,13 @@ try {
   process.exitCode = 1;
 } finally {
   state.started = false;
+  clearInterval(memoryTimer);
   await new Promise(resolve => health?.close(resolve) ?? resolve());
-  lockDb?.close();
-  db?.close();
+  try {
+    if (db && telegram) await cleanupTemporary({ db, telegram });
+  } catch {
+    log?.('TEMPORARY_CLEANUP_INCOMPLETE', newTraceId(), { stage: 'SHUTDOWN', error_type: 'TELEGRAM_OR_STORAGE_FAILURE' }, 'WARN');
+  }
+  await lockDb?.close();
+  await db?.close();
 }

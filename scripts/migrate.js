@@ -10,4 +10,4 @@ try {
 } catch {
   process.stderr.write(`${JSON.stringify({ status: 'migration_failed' })}\n`);
   process.exitCode = 1;
-} finally { db?.close(); }
+} finally { await db?.close(); }
