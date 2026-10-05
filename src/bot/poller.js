@@ -11,14 +11,13 @@ import { privateRequest } from './private-dashboard.js';
 import { withSignal } from '../infra/deadline.js';
 import {prepareBank} from '../infra/prepare-bank.js';
 
-const disconnected=e=>e.code==='NETWORK'||e.code>=500||[401,409].includes(e.code);
 export function acceptedMessage(message,bot){
  if(!message)return false;
  const text=message.text?.trim()??'';
  const start=text.match(/^\/start(?:@([A-Za-z0-9_]+))?(?:\s+\S+)?$/i);
  return classifyTrigger({kind:'message',chatType:message.chat?.type,text,
   directReplyToBot:message.reply_to_message?.from?.id===bot.id,
-  inPrivateFlow:Boolean((start&&(!start[1]||start[1].toLowerCase()===bot.username.toLowerCase()))||/^#dongi(?![\p{L}\p{N}_])/iu.test(text)||privateRequest(text))})!=='DROP';
+  inPrivateFlow:Boolean((start&&(!start[1]||start[1].toLowerCase()===bot.username.toLowerCase()))||/^#dongi(?![\p{L}\p{N}_])/iu.test(text)||privateRequest(text,bot.username))})!=='DROP';
 }
 
 export async function cleanupTemporary({db,telegram}){
@@ -29,11 +28,9 @@ export async function cleanupTemporary({db,telegram}){
  }
 }
 
-// Atomically discard queued updates, including callbacks without timestamps.
-// Only delivery payloads are discarded: financial records remain untouched.
+// Switch to polling without discarding updates queued during an outage or handoff.
 export async function beginSession(deps){
- await deps.telegram.call('deleteWebhook',{drop_pending_updates:true});
- deps.sessionStartedAt=Math.floor(Date.now()/1000);
+ await deps.telegram.call('deleteWebhook',{drop_pending_updates:false});
  await cleanupTemporary(deps);
 }
 
@@ -45,12 +42,10 @@ export async function pollOnce(deps) {
  const updates=await telegram.call('getUpdates',{offset,timeout:25,allowed_updates:['message','callback_query','chat_member','my_chat_member']},deps.shutdownSignal);
  for(const update of updates){
   if(!Number.isSafeInteger(update.update_id))continue;
-  if(deps.needsReset)break;
   const callback=update.callback_query;
-  const stale=deps.sessionStartedAt && update.message?.date && update.message.date<deps.sessionStartedAt;
-  if(!stale && syncMembership(db,update)){
+  if(syncMembership(db,update)){
    log('MEMBERSHIP_SYNCED',newTraceId(),{telegram_update_id:update.update_id,stage:'MEMBERSHIP',result:'SUCCESS'});
-  }else if(!stale){
+  }else{
    let routed=update;
    if(callback){
     const action=callback.message?.from?.id===bot.id&&callback.data?.match(/^dai:(confirm|cancel):([a-f0-9]{36})$/);
@@ -88,34 +83,49 @@ export async function pollOnce(deps) {
     finally{clearTimeout(timer);}
     if(deps.shutdownSignal?.aborted)break;
     if(signal.aborted)prepared={error:'REQUEST_TIMEOUT'};
-    if(!deps.needsReset){
-     const result=router(routed,prepared);
-     if(result.fallback)await telegram.call('sendMessage',result.fallback);
-     await deliver();
-    }
+    const result=router(routed,prepared);
+    if(result.fallback)await telegram.call('sendMessage',result.fallback);
+    await deliver();
     if(temporary)await cleanupTemporary(deps);
    }
   }
-  if(deps.needsReset)break;
   db.prepare("INSERT INTO runtime_state VALUES ('offset',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(update.update_id+1));
   await deliver();
  }
 }
 
-export async function runPolling(dependencies,shouldStop,sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))){
- const original=dependencies.telegram;
- const deps={...dependencies,needsReset:true,telegram:{call:async(...args)=>{
-  try{return await original.call(...args);}catch(error){if(disconnected(error))deps.needsReset=true;throw error;}
- }}};
+function retryDelay(ms,signal){
+ if(signal?.aborted)return Promise.resolve();
+ return new Promise(resolve=>{
+  const finish=()=>{clearTimeout(timer);signal?.removeEventListener('abort',finish);resolve();};
+  const timer=setTimeout(finish,ms);
+  signal?.addEventListener('abort',finish,{once:true});
+ });
+}
+
+export async function runPolling(dependencies,shouldStop,sleep=retryDelay){
+ const deps=dependencies;
+ if(shouldStop())return;
+ let sessionReady=false;
+ let consecutiveFailures=0;
+ let lastFailureLoggedAt=0;
  while(!shouldStop()){
   try{
-   if(deps.needsReset){await beginSession(deps);deps.needsReset=false;}
+   if(!sessionReady){await beginSession(deps);sessionReady=true;}
    await pollOnce(deps);
+   consecutiveFailures=0;
   }catch(error){
    if(shouldStop())break;
-   dependencies.log('POLL_FAILED',newTraceId(),{error_type:'TELEGRAM_OR_STORAGE_FAILURE',stage:'POLL'},'ERROR');
+   consecutiveFailures=Math.min(consecutiveFailures+1,7);
+   const now=Date.now();
+   if(consecutiveFailures===1||now-lastFailureLoggedAt>=300000){
+    dependencies.log('POLL_FAILED',newTraceId(),{error_type:'TELEGRAM_OR_STORAGE_FAILURE',stage:'POLL'},'ERROR');
+    lastFailureLoggedAt=now;
+   }
    if(error.code===401||error.code===409)throw error;
-   await sleep(Math.min(60000,Math.max(1000,(Number(error.retryAfter)||1)*1000)));
+   if(deps.db.connectionLost||error.code==='DB_OPERATION_TIMEOUT')throw new Error('DATABASE_CONNECTION_LOST');
+   const backoff=Math.min(60000,1000*2**Math.min(consecutiveFailures-1,6));
+   await sleep(Math.min(60000,Math.max(backoff,(Number(error.retryAfter)||0)*1000)),deps.shutdownSignal);
   }
  }
 }

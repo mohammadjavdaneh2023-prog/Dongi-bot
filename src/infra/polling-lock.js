@@ -56,11 +56,17 @@ export async function runWithPollingLock({
     ? AbortSignal.any([shutdownSignal, lockFailure.signal])
     : lockFailure.signal;
   const polling = Promise.resolve().then(() => run(pollingSignal));
+  const disconnectWatch = new AbortController();
+  const disconnectSignal = shutdownSignal
+    ? AbortSignal.any([shutdownSignal, disconnectWatch.signal])
+    : disconnectWatch.signal;
   const outcome = await Promise.race([
-    polling.then(() => ({ type: 'polling_stopped' })),
-    db.waitForDisconnect(shutdownSignal).then(lost => ({ type: lost ? 'lock_lost' : 'shutdown' })),
+    polling.then(() => ({ type: 'polling_stopped' }), error => ({ type: 'polling_failed', error })),
+    db.waitForDisconnect(disconnectSignal).then(lost => ({ type: lost ? 'lock_lost' : 'shutdown' })),
   ]);
+  disconnectWatch.abort();
 
+  if (outcome.type === 'polling_failed') throw outcome.error;
   if (outcome.type === 'lock_lost') {
     onLockLost();
     lockFailure.abort();

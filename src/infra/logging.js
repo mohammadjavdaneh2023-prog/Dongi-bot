@@ -4,6 +4,8 @@ const fields = new Set([
   'telegram_update_id', 'chat_id', 'message_id', 'dongi_user_id', 'public_id',
   'actor_role', 'actor_status', 'handler', 'operation', 'stage', 'result',
   'duration_ms', 'error_type', 'ai_model', 'ai_class', 'delivery_status',
+  'rss_bytes', 'heap_used_bytes', 'external_bytes', 'array_buffers_bytes',
+  'process_id',
 ]);
 const priorities = { DEBUG: 10, INFO: 20, WARN: 30, ERROR: 40 };
 export const newTraceId = () => `DNG-${randomUUID().replaceAll('-', '').toUpperCase()}`;

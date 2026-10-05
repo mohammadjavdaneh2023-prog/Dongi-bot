@@ -21,4 +21,4 @@ try {
 } catch (error) {
   process.stderr.write(`${error.code && /^[A-Z_]+$/.test(error.code) ? error.code : 'BOOTSTRAP_FAILED'}\n`);
   process.exitCode = 1;
-} finally { db?.close(); }
+} finally { await db?.close(); }

@@ -37,7 +37,7 @@ export function createRouter({ db, cipher, bot, config, log }) {
     const text = typeof message.text === 'string' ? message.text.trim() : '';
     const start = text.match(/^\/start(?:@([A-Za-z0-9_]+))?(?:\s+(\S+))?$/i);
     const addressedStart = start && (!start[1] || start[1].toLowerCase() === bot.username.toLowerCase());
-    const privateView=message.chat.type==='private'?privateRequest(text):null;
+    const privateView=message.chat.type==='private'?privateRequest(text,bot.username):null;
     const routeKind = classifyTrigger({
       kind: 'message', chatType: message.chat.type, text,
       inPrivateFlow: Boolean(addressedStart || prefix.test(text) || privateView),
@@ -67,6 +67,7 @@ export function createRouter({ db, cipher, bot, config, log }) {
       const response = (event, vars = {}) => ({ event, responses: [{ chatId: message.chat.id, text: render(event, vars, role) }] });
       if(preparedInvoice?.error)throw new DomainError(preparedInvoice.error,preparedInvoice.details);
       if(privateView) {
+        if(privateView.close)return {event:'PRIVATE_MENU_CLOSED',responses:[{chatId:message.chat.id,text:render('PRIVATE_MENU_CLOSED'),replyMarkup:{remove_keyboard:true}}]};
         const view=dashboard(db,actor,privateView);
         return {event:view.event,responses:[{chatId:message.chat.id,text:view.text,replyMarkup:view.replyMarkup}]};
       }
