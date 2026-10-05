@@ -18,6 +18,7 @@ import { privateRequest, dashboard } from './private-dashboard.js';
 import { createPending, resolvePending } from '../repositories/ai-pending.js';
 import { ownerDecoration } from './response-style.js';
 import {operateBank} from '../repositories/banks.js';
+import { enqueueSystemNotification } from '../infra/outbox.js';
 
 const prefix = /^#dongi(?![\p{L}\p{N}_])/iu;
 const safeId = value => Number.isSafeInteger(value);
@@ -105,6 +106,13 @@ export function createRouter({ db, cipher, bot, config, log }) {
         else if (actor?.role === 'OWNER') user = service.startOwner({ senderTelegramId: message.from.id, chatType: 'private', traceId });
         else if (actor?.bot_started) user = actor;
         else return response('ONBOARDING_REQUIRED');
+        if (user.invitationAcceptance) enqueueSystemNotification(db, cipher, {
+          key: `invitation:${user.invitationAcceptance.id}:accepted`,
+          chatId: user.invitationAcceptance.ownerTelegramId,
+          event: 'INVITATION_ACCEPTED',
+          text: `✅ کاربر ${user.invitationAcceptance.name} با شناسه DONGI ${user.invitationAcceptance.publicId} دعوت را پذیرفت و وارد شد.`,
+          traceId,
+        });
         const result=response('PROFILE', { name: user.canonical_name, public_id: user.public_id, status: user.status });
         result.responses[0].replyMarkup=dashboard(db,user,{view:'profile',page:1}).replyMarkup;
         return result;

@@ -20,7 +20,7 @@ function fixture(t) {
   const log = (...args) => logs.push(args);
   const service = new OnboardingService(new IdentityRepository(db));
   service.bootstrapOwner({ ownerTelegramId: '123', name: 'Owner', traceId: newTraceId() });
-  const config = { grantTtlSeconds: 86400 };
+  const config = { grantTtlSeconds: 3600 };
   const router = createRouter({ db, cipher, bot, config, log });
   let sequence = 0;
   const update = (text, extra = {}) => ({ update_id: ++sequence, message: {
@@ -41,6 +41,11 @@ test('private Start, owner creation in group and invitation redemption work end 
   const token = invitation.text.match(/\?start=([A-Za-z0-9_-]+)/)[1];
   assert.equal(f.router(f.update(`/start ${token}`, { from: { id: 456 }, chat: { id: 456, type: 'private' } })).event, 'PROFILE');
   assert.equal(f.db.prepare("SELECT bot_started FROM users WHERE public_id = 'CD123'").get().bot_started, 1);
+  const ownerNotice=f.db.prepare("SELECT encrypted_payload FROM response_outbox WHERE idempotency_key LIKE 'invitation:%:accepted'").get();
+  assert.match(f.cipher.decrypt(ownerNotice.encrypted_payload).text,/کاربر علی با شناسه DONGI CD123 دعوت را پذیرفت/);
+  assert.ok(!f.cipher.decrypt(ownerNotice.encrypted_payload).text.includes(token));
+  f.router(f.update(`/start ${token}`, { from: { id: 456 }, chat: { id: 456, type: 'private' } }));
+  assert.equal(f.db.prepare("SELECT count(*) AS n FROM response_outbox WHERE idempotency_key LIKE 'invitation:%:accepted'").get().n,1);
   assert.ok(!JSON.stringify(f.logs).includes(token));
   assert.ok(!JSON.stringify(f.db.prepare('SELECT * FROM response_outbox').all()).includes(token));
 });

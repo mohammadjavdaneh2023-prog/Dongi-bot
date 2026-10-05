@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { DomainError } from '../../domain/errors.js';
 
-const migrations = [new URL('./migrations/001_initial_postgresql.sql', import.meta.url)];
+const migrations = [
+  new URL('./migrations/001_initial_postgresql.sql', import.meta.url),
+  new URL('./migrations/002_invitation_lifecycle.sql', import.meta.url),
+];
 const responseBytes = 16 * 1024 * 1024;
 const responseBufferBytes = 12 + responseBytes;
 const decoder = new TextDecoder();

@@ -6,7 +6,7 @@ export function manageUser(db,{actor,message,intent,currentMemberIds,traceId}) {
   requireCondition(actor&&actor.status!=='SUSPENDED','PERMISSION_DENIED');
   requireCondition(actor.status!=='FROZEN','ACTOR_FROZEN');
   requireCondition(actor.bot_started===1,'USER_NOT_STARTED');
-  const target=db.prepare('SELECT * FROM users WHERE public_id=?').get(intent.publicId);
+  const target=db.prepare('SELECT * FROM users WHERE public_id=? AND retired_at IS NULL').get(intent.publicId);
   requireCondition(target,'UNKNOWN_USER',{addressed_as:intent.publicId});
   requireCondition(target.role!=='OWNER','OWNER_PROTECTED');
   const group=['group','supergroup'].includes(message.chat.type);

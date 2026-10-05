@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { requireCondition, DomainError } from '../errors.js';
+import { normalizeIdentity } from '../identity.js';
 
 const hashToken = token => createHash('sha256').update(token).digest('hex');
 const publicIdPattern = /^[A-Z]{2}[1-9][0-9]{2}$/;
@@ -17,11 +18,13 @@ function canonicalName(value) {
 }
 
 export class OnboardingService {
-  constructor(repository, { grantTtlSeconds = 86400, now = Date.now, generatePublicId = randomPublicId } = {}) {
-    requireCondition(Number.isSafeInteger(grantTtlSeconds) && grantTtlSeconds > 0 && grantTtlSeconds <= 31536000, 'INVALID_GRANT_TTL');
+  constructor(repository, options = {}) {
+    const { grantTtlSeconds = 3600, now = () => repository.databaseNow(), generatePublicId = randomPublicId } = options;
+    requireCondition(grantTtlSeconds === 3600, 'INVALID_GRANT_TTL');
     this.repository = repository;
-    this.grantTtlMs = grantTtlSeconds * 1000;
+    this.grantTtlMs = 3600000;
     this.now = now;
+    this.fixedClock = Object.hasOwn(options, 'now');
     this.generatePublicId = generatePublicId;
   }
 
@@ -74,11 +77,18 @@ export class OnboardingService {
       requireCondition(actor.status === 'ACTIVE', actor.status === 'FROZEN' ? 'ACTOR_FROZEN' : 'PERMISSION_DENIED');
       requireCondition(actor.bot_started === 1, 'USER_NOT_STARTED');
       const now = this.now();
+      const resolvedPublicId = this.choosePublicId(publicId);
+      const normalizedNameKey = normalizeIdentity(normalizedName);
+      const nameConflict = this.repository.allUsers().some(candidate => normalizeIdentity(candidate.canonical_name) === normalizedNameKey)
+        || this.repository.reservedName(normalizedNameKey);
+      requireCondition(!nameConflict, 'USER_NAME_CONFLICT');
       const user = this.repository.insertUser({ id: randomUUID(), telegram_user_id: null,
-        public_id: this.choosePublicId(publicId), canonical_name: normalizedName, role: 'MEMBER', now });
+        public_id: resolvedPublicId, canonical_name: canonicalName(name), role: 'MEMBER', now });
       const token = randomBytes(32).toString('base64url');
-      const expiresAt = now + this.grantTtlMs;
-      this.repository.insertGrant({ id: randomUUID(), userId: user.id, hash: hashToken(token), expiresAt, actorId: actor.id, now });
+      const grant = this.repository.insertGrant({ id: randomUUID(), userId: user.id, hash: hashToken(token),
+        expiresAt: now + this.grantTtlMs, actorId: actor.id, now, fixedClock: this.fixedClock,
+        publicId: user.public_id, name: user.canonical_name, normalizedName: normalizedNameKey });
+      const expiresAt = grant.expires_at;
       this.repository.audit('USER_CREATED', actor.id, user.id, traceId, { public_id: user.public_id, canonical_name: user.canonical_name }, now);
       // Plaintext exists only in the returned delivery result, never DB/Audit/logs.
       return { user, token, expiresAt };
@@ -113,8 +123,10 @@ export class OnboardingService {
       requireCondition(user.status!=='SUSPENDED','TARGET_SUSPENDED');
       const now=this.now();
       const invalidated=this.repository.expireUnusedGrants(user.id,now);
-      const token=randomBytes(32).toString('base64url');const expiresAt=now+this.grantTtlMs;
-      this.repository.insertGrant({id:randomUUID(),userId:user.id,hash:hashToken(token),expiresAt,actorId:actor.id,now});
+      const token=randomBytes(32).toString('base64url');
+      const grant=this.repository.insertGrant({id:randomUUID(),userId:user.id,hash:hashToken(token),expiresAt:now+this.grantTtlMs,actorId:actor.id,now,
+        fixedClock:this.fixedClock,publicId:user.public_id,name:user.canonical_name,normalizedName:normalizeIdentity(user.canonical_name)});
+      const expiresAt=grant.expires_at;
       this.repository.audit('INVITATION_REISSUED',actor.id,user.id,traceId,{public_id:user.public_id,invalidated},now);
       return {user,token,expiresAt};
     });
@@ -127,14 +139,18 @@ export class OnboardingService {
     return this.run(traceId, () => {
       const now = this.now();
       const grant = this.repository.grantByHash(hashToken(token));
-      requireCondition(grant && grant.used_at === null && grant.revoked_at === null && grant.expires_at > now, 'ONBOARDING_TOKEN_INVALID');
+      requireCondition(grant && grant.status === 'PENDING' && grant.used_at === null && grant.revoked_at === null && grant.expires_at > now, 'ONBOARDING_TOKEN_INVALID');
       const user = this.repository.byId(grant.user_id);
       requireCondition(user.status !== 'SUSPENDED', 'TARGET_SUSPENDED');
       requireCondition(user.telegram_user_id === null && !this.repository.byTelegram(senderId), 'TELEGRAM_ID_CONFLICT');
-      requireCondition(this.repository.consumeGrant(grant.id, now), 'ONBOARDING_TOKEN_INVALID');
+      requireCondition(this.repository.consumeGrant(grant.id, now, this.fixedClock), 'ONBOARDING_TOKEN_INVALID');
       const linked = this.repository.linkUser(user.id, senderId, now);
       this.repository.audit('USER_LINKED', user.id, user.id, traceId, { bot_started: true, grant_id: grant.id }, now);
-      return linked;
+      const owner = this.repository.owner();
+      return Object.assign(linked, { invitationAcceptance: {
+        id: grant.id, ownerTelegramId: owner.telegram_user_id,
+        name: grant.reserved_name, publicId: grant.reserved_public_id,
+      } });
     });
   }
 }

@@ -11,7 +11,7 @@ export function loadActiveInvoices(db) {
 }
 
 export function invoiceContext(db, message) {
-  const users = db.prepare('SELECT * FROM users ORDER BY public_id').all();
+  const users = db.prepare('SELECT * FROM users WHERE retired_at IS NULL ORDER BY public_id').all();
   const aliases = db.prepare('SELECT user_id, alias FROM user_aliases ORDER BY id').all();
   for (const user of users) user.aliases = aliases.filter(alias => alias.user_id === user.id).map(alias => alias.alias);
   return { users, actorId: users.find(user => user.telegram_user_id === String(message.from?.id))?.id,

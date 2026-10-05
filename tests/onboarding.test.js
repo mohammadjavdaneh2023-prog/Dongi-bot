@@ -1,9 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { getEventListeners } from 'node:events';
 import { openDatabase } from '../src/infra/db/database.js';
 import { IdentityRepository } from '../src/repositories/identity.js';
 import { OnboardingService } from '../src/domain/users/onboarding.js';
 import { newTraceId } from '../src/infra/logging.js';
+import { expirePendingInvitations } from '../src/infra/invitation-expiry.js';
+import { createPayloadCipher, deliverOutbox, recoverStaleSystemDeliveries } from '../src/infra/outbox.js';
+import { startInvitationExpiryWorker } from '../src/infra/invitation-expiry.js';
+import { loadConfig } from '../src/infra/config.js';
 
 function fixture(t, options = {}) {
   const db = openDatabase(':memory:');
@@ -14,7 +19,7 @@ function fixture(t, options = {}) {
   const traceId = newTraceId();
   const owner = service.bootstrapOwner({ ownerTelegramId: '123', name: 'رئیس', publicId: 'AB417', traceId });
   service.startOwner({ senderTelegramId: '123', chatType: 'private', traceId });
-  return { db, repository, service, traceId, owner, advance: ms => { now += ms; },
+  return { db, repository, service, traceId, owner, current: () => now, advance: ms => { now += ms; },
     create: (extra = {}) => service.createUser({ actorTelegramId: '123', inputMode: 'DETERMINISTIC', name: 'علی', traceId, ...extra }),
     redeem: (token, extra = {}) => service.redeemGrant({ senderTelegramId: '456', chatType: 'private', token, traceId, ...extra }),
   };
@@ -73,13 +78,80 @@ test('grant is hashed, single use, and links exactly one Telegram account', t =>
   assert.ok(!JSON.stringify(audit).includes(result.token));
 });
 test('expiry boundary, invalid token and public chat cannot consume a grant', t => {
-  const f = fixture(t, { grantTtlSeconds: 60 });
+  const f = fixture(t);
   const { token } = f.create();
   assert.throws(() => f.redeem(token, { chatType: 'group' }), { code: 'ONBOARDING_PRIVATE_ONLY' });
   assert.throws(() => f.redeem('bad'), { code: 'ONBOARDING_TOKEN_INVALID' });
-  f.advance(60000);
+  f.advance(3600000);
   assert.throws(() => f.redeem(token), { code: 'ONBOARDING_TOKEN_INVALID' });
   assert.equal(f.db.prepare('SELECT used_at FROM access_grants').get().used_at, null);
+  f.advance(1);
+  assert.throws(() => f.redeem(token), { code: 'ONBOARDING_TOKEN_INVALID' });
+});
+
+test('grant TTL is fixed at 3600 seconds and accepts only immediately before expiry', t => {
+  const f=fixture(t);const {token}=f.create({publicId:'CD123'});
+  const grant=f.db.prepare('SELECT created_at,expires_at,status FROM access_grants').get();
+  assert.equal(grant.expires_at-grant.created_at,3600000);
+  assert.equal(grant.status,'PENDING');
+  assert.equal(loadConfig({DATABASE_URL:'postgresql://local/db'},{requireRuntimeSecrets:false}).grantTtlSeconds,3600);
+  assert.throws(()=>loadConfig({DATABASE_URL:'postgresql://local/db',DONGI_GRANT_TTL_SECONDS:'86400'},{requireRuntimeSecrets:false}),/DONGI_GRANT_TTL_SECONDS/);
+  f.advance(3599999);
+  const accepted=f.redeem(token);
+  assert.equal(accepted.bot_started,1);
+  assert.equal(f.db.prepare('SELECT status FROM access_grants').get().status,'ACCEPTED');
+  assert.throws(()=>f.create({publicId:'CD123',name:'دوست دیگر'}),{code:'PUBLIC_ID_CONFLICT'});
+  assert.throws(()=>f.create({publicId:'EF456',name:'علی'}),{code:'USER_NAME_CONFLICT'});
+  assert.throws(()=>new OnboardingService(f.repository,{grantTtlSeconds:3599}),{code:'INVALID_GRANT_TTL'});
+});
+
+test('a pending invitation reserves its name and ID; expiry releases only the temporary profile',t=>{
+ const f=fixture(t);const first=f.create({publicId:'CD123'});
+ assert.throws(()=>f.create({publicId:'CD123',name:'دیگر'}),{code:'PUBLIC_ID_CONFLICT'});
+ assert.throws(()=>f.create({publicId:'EF456',name:'علی'}),{code:'USER_NAME_CONFLICT'});
+ const cipher=createPayloadCipher('ab'.repeat(32));
+ const dbNow=f.repository.databaseNow();
+ f.db.prepare('UPDATE access_grants SET expires_at=? WHERE id=?').run(dbNow-1,f.db.prepare('SELECT id FROM access_grants').get().id);
+ assert.equal(expirePendingInvitations({db:f.db,cipher}),1);
+ const retired=f.db.prepare('SELECT public_id,retired_at FROM users WHERE id=?').get(first.user.id);
+ assert.equal(retired.public_id,'CD123');assert.ok(retired.retired_at);
+ assert.equal(f.repository.byPublicId('CD123'),undefined);
+ const replacement=f.create({publicId:'CD123',name:'علی'});
+ assert.equal(replacement.user.public_id,'CD123');
+ assert.equal(f.db.prepare("SELECT status FROM access_grants WHERE user_id=?").get(replacement.user.id).status,'PENDING');
+ assert.equal(f.db.prepare("SELECT count(*) AS n FROM response_outbox WHERE idempotency_key LIKE 'invitation:%:expired'").get().n,1);
+});
+
+test('expiration notification is queued once and transient Telegram failure can retry from outbox',async t=>{
+ const f=fixture(t);f.create({publicId:'CD123'});
+ f.db.prepare('UPDATE access_grants SET expires_at=?').run(f.repository.databaseNow()-1);
+ const cipher=createPayloadCipher('ab'.repeat(32));
+ assert.equal(expirePendingInvitations({db:f.db,cipher}),1);
+ assert.equal(expirePendingInvitations({db:f.db,cipher}),0);
+ const queued=f.db.prepare("SELECT id,idempotency_key,delivery_status FROM response_outbox WHERE idempotency_key IS NOT NULL").get();
+ assert.equal(queued.idempotency_key,`invitation:${f.db.prepare('SELECT id FROM access_grants').get().id}:expired`);
+ await deliverOutbox({db:f.db,cipher,log:()=>{},now:()=>Date.now()+60000,telegram:{call:async()=>{throw Object.assign(new Error('temporary'),{code:'NETWORK'});}}});
+ assert.equal(f.db.prepare('SELECT delivery_status FROM response_outbox WHERE id=?').get(queued.id).delivery_status,'PENDING');
+ f.db.prepare("UPDATE response_outbox SET delivery_status='SENDING',sending_started_at=? WHERE id=?").run(f.repository.databaseNow()-120001,queued.id);
+ recoverStaleSystemDeliveries(f.db);
+ assert.equal(f.db.prepare('SELECT delivery_status FROM response_outbox WHERE id=?').get(queued.id).delivery_status,'PENDING');
+ const sent=[];
+ await deliverOutbox({db:f.db,cipher,log:()=>{},now:()=>Date.now()+120000,telegram:{call:async(_method,payload)=>{sent.push(payload);return {message_id:1};}}});
+ assert.equal(sent.length,1);assert.match(sent[0].text,/دعوت علی با شناسه DONGI CD123/);
+ assert.equal(f.db.prepare("SELECT count(*) AS n FROM response_outbox WHERE idempotency_key=?").get(queued.idempotency_key).n,1);
+});
+
+test('expiry worker processes persisted rows immediately and removes its timer and shutdown listener',async t=>{
+ const f=fixture(t);f.create({publicId:'CD123'});
+ f.db.prepare('UPDATE access_grants SET expires_at=?').run(f.repository.databaseNow()-1);
+ const controller=new AbortController();const cipher=createPayloadCipher('ab'.repeat(32));
+ startInvitationExpiryWorker({db:f.db,cipher,signal:controller.signal,intervalMs:5});
+ assert.equal(f.db.prepare("SELECT status FROM access_grants").get().status,'EXPIRED');
+ assert.equal(getEventListeners(controller.signal,'abort').length,1);
+ controller.abort();
+ assert.equal(getEventListeners(controller.signal,'abort').length,0);
+ await new Promise(resolve=>setTimeout(resolve,15));
+ assert.equal(f.db.prepare("SELECT count(*) AS n FROM audit_events WHERE event='INVITATION_EXPIRED'").get().n,1);
 });
 test('only an active started Owner can create users, never through AI', t => {
   const f = fixture(t);
@@ -108,7 +180,7 @@ test('public IDs validate, remain immutable, and generated collisions retry', t 
 test('Telegram identity conflicts and suspended profiles leave tokens unused', t => {
   const f = fixture(t);
   const first = f.create(); f.redeem(first.token);
-  const second = f.create();
+  const second = f.create({ name: 'سارا' });
   assert.throws(() => f.redeem(second.token), { code: 'TELEGRAM_ID_CONFLICT' });
   f.db.prepare("UPDATE users SET status = 'SUSPENDED' WHERE id = ?").run(second.user.id);
   assert.throws(() => f.redeem(second.token, { senderTelegramId: '789' }), { code: 'TARGET_SUSPENDED' });
@@ -143,9 +215,9 @@ test('audit is append-only and foreign keys enforce references', t => {
 
 test('PostgreSQL migrations are safe to run repeatedly', () => {
   let db = openDatabase(process.env.TEST_DATABASE_URL);
-  try { assert.equal(db.prepare('SELECT count(*)::integer AS n FROM schema_migrations').get().n, 1); }
+  try { assert.equal(db.prepare('SELECT count(*)::integer AS n FROM schema_migrations').get().n, 2); }
   finally { db.close(); }
   db = openDatabase(process.env.TEST_DATABASE_URL);
-  try { assert.equal(db.prepare('SELECT count(*)::integer AS n FROM schema_migrations').get().n, 1); }
+  try { assert.equal(db.prepare('SELECT count(*)::integer AS n FROM schema_migrations').get().n, 2); }
   finally { db.close(); }
 });

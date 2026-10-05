@@ -21,7 +21,7 @@ export function operateBank(db,{actor,message,prepared,traceId,updateId}){
  let bank;let members;
  if(intent.action==='create'){
   requireCondition(admin,'PERMISSION_DENIED');
-  members=intent.members.map(m=>{const u=db.prepare('SELECT * FROM users WHERE public_id=?').get(m.publicId);requireCondition(u,'UNKNOWN_USER');return {...u,user_id:u.id,weight:m.weight};}).sort((a,b)=>a.public_id.localeCompare(b.public_id));
+ members=intent.members.map(m=>{const u=db.prepare('SELECT * FROM users WHERE public_id=? AND retired_at IS NULL').get(m.publicId);requireCondition(u,'UNKNOWN_USER');return {...u,user_id:u.id,weight:m.weight};}).sort((a,b)=>a.public_id.localeCompare(b.public_id));
   requireCondition(members.every(m=>prepared.currentMemberIds.has(m.user_id)),'BANK_MEMBER_ABSENT');
   requireCondition(members.every(m=>m.status==='ACTIVE'),'BANK_MEMBER_INACTIVE');
   const manager=members.find(m=>m.public_id===intent.manager);requireCondition(manager,'BANK_MANAGER_REQUIRED');
