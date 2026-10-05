@@ -74,7 +74,7 @@ docker build -t dongi:local .
 - تست: `TEST_DATABASE_URL`
 - ابزار بکاپ: `BACKUP_ENCRYPTION_KEY`, `BACKUP_OUTPUT`, `RESTORE_DATABASE_URL`
 
-`GEMINI_API_KEY` کلید داخلی و مشترک کل زیرسیستم AI است. فقط مالک سیستم آن را در Secretهای میزبان وارد می‌کند؛ کاربران هیچ کلیدی ثبت یا مدیریت نمی‌کنند. این کلید در PostgreSQL، Git، image یا log ذخیره نمی‌شود.
+`DONGI_GRANT_TTL_SECONDS` برای دعوت کاربران دقیقاً `3600` است؛ مقدار دیگری باعث توقف startup می‌شود. `GEMINI_API_KEY` کلید داخلی و مشترک کل زیرسیستم AI است. فقط مالک سیستم آن را در Secretهای میزبان وارد می‌کند؛ کاربران هیچ کلیدی ثبت یا مدیریت نمی‌کنند. این کلید در PostgreSQL، Git، image یا log ذخیره نمی‌شود.
 
 ## عملیات و انتشار آینده
 

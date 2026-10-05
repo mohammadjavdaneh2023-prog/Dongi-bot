@@ -1,4 +1,5 @@
-import { deliverOutbox } from '../infra/outbox.js';
+import { deliverOutbox, recoverStaleSystemDeliveries } from '../infra/outbox.js';
+import { startInvitationExpiryWorker } from '../infra/invitation-expiry.js';
 import { renderResponse } from './responses.js';
 import { newTraceId } from '../infra/logging.js';
 import { syncMembership } from '../infra/membership.js';
@@ -37,6 +38,7 @@ export async function beginSession(deps){
 export async function pollOnce(deps) {
  const {db,telegram,router,cipher,log,bot,ai}=deps;
  const deliver=()=>deliverOutbox({db,telegram,cipher,log});
+ recoverStaleSystemDeliveries(db);
  await deliver();await cleanupTemporary(deps);
  const offset=Number(db.prepare("SELECT value FROM runtime_state WHERE key='offset'").get()?.value??0);
  const updates=await telegram.call('getUpdates',{offset,timeout:25,allowed_updates:['message','callback_query','chat_member','my_chat_member']},deps.shutdownSignal);
@@ -106,26 +108,31 @@ function retryDelay(ms,signal){
 export async function runPolling(dependencies,shouldStop,sleep=retryDelay){
  const deps=dependencies;
  if(shouldStop())return;
+ const stopInvitationExpiry=startInvitationExpiryWorker({db:deps.db,cipher:deps.cipher,log:deps.log,signal:deps.shutdownSignal});
  let sessionReady=false;
  let consecutiveFailures=0;
  let lastFailureLoggedAt=0;
- while(!shouldStop()){
-  try{
-   if(!sessionReady){await beginSession(deps);sessionReady=true;}
-   await pollOnce(deps);
-   consecutiveFailures=0;
-  }catch(error){
-   if(shouldStop())break;
-   consecutiveFailures=Math.min(consecutiveFailures+1,7);
-   const now=Date.now();
-   if(consecutiveFailures===1||now-lastFailureLoggedAt>=300000){
-    dependencies.log('POLL_FAILED',newTraceId(),{error_type:'TELEGRAM_OR_STORAGE_FAILURE',stage:'POLL'},'ERROR');
-    lastFailureLoggedAt=now;
+ try{
+  while(!shouldStop()){
+   try{
+    if(!sessionReady){await beginSession(deps);sessionReady=true;}
+    await pollOnce(deps);
+    consecutiveFailures=0;
+   }catch(error){
+    if(shouldStop())break;
+    consecutiveFailures=Math.min(consecutiveFailures+1,7);
+    const now=Date.now();
+    if(consecutiveFailures===1||now-lastFailureLoggedAt>=300000){
+     dependencies.log('POLL_FAILED',newTraceId(),{error_type:'TELEGRAM_OR_STORAGE_FAILURE',stage:'POLL'},'ERROR');
+     lastFailureLoggedAt=now;
+    }
+    if(error.code===401||error.code===409)throw error;
+    if(deps.db.connectionLost||error.code==='DB_OPERATION_TIMEOUT')throw new Error('DATABASE_CONNECTION_LOST');
+    const backoff=Math.min(60000,1000*2**Math.min(consecutiveFailures-1,6));
+    await sleep(Math.min(60000,Math.max(backoff,(Number(error.retryAfter)||0)*1000)),deps.shutdownSignal);
    }
-   if(error.code===401||error.code===409)throw error;
-   if(deps.db.connectionLost||error.code==='DB_OPERATION_TIMEOUT')throw new Error('DATABASE_CONNECTION_LOST');
-   const backoff=Math.min(60000,1000*2**Math.min(consecutiveFailures-1,6));
-   await sleep(Math.min(60000,Math.max(backoff,(Number(error.retryAfter)||0)*1000)),deps.shutdownSignal);
   }
+ }finally{
+  stopInvitationExpiry();
  }
 }

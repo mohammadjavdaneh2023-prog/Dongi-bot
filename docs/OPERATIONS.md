@@ -11,6 +11,8 @@
 
 Startup نیز migration را idempotent اجرا می‌کند، اما اجرای جداگانه پیش از Deploy تشخیص خطا را ساده‌تر می‌کند. هیچ migration یا ابزار import برای SQLite وجود ندارد.
 
+دعوت‌ها در Production دقیقاً `3600` ثانیه اعتبار دارند. مقدار میزبان `DONGI_GRANT_TTL_SECONDS` باید `3600` باشد؛ برنامه هر مقدار دیگری را در startup رد می‌کند. Worker پس از گرفتن advisory lock بلافاصله اجرا می‌شود و هر 15 ثانیه دعوت‌های سررسیده را از PostgreSQL پیدا می‌کند؛ پس از راه‌اندازی دوباره نیز دعوت‌های پردازش‌نشده را می‌یابد. اعلان‌های انقضا و پذیرش در `response_outbox` پایدار می‌مانند.
+
 ## مشاهده‌پذیری
 
 logها JSON روی stdout/stderr هستند. `trace_id` عملیات را پیوند می‌دهد. Token، API key، Session، شماره تلفن، متن پیام، prompt، پاسخ خام provider و exception خام ثبت نمی‌شوند. log collector میزبان باید retention و دسترسی محدود داشته باشد.

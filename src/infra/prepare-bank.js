@@ -18,7 +18,7 @@ export async function prepareBank(db,telegram,update){
   let members;
   if(intent.action==='create'){
    requireCondition(admin,'PERMISSION_DENIED');
-   members=intent.members.map(m=>{const user=db.prepare('SELECT * FROM users WHERE public_id=?').get(m.publicId);requireCondition(user,'UNKNOWN_USER',{public_id:m.publicId});return user;});
+   members=intent.members.map(m=>{const user=db.prepare('SELECT * FROM users WHERE public_id=? AND retired_at IS NULL').get(m.publicId);requireCondition(user,'UNKNOWN_USER',{public_id:m.publicId});return user;});
   }else{
    const bank=db.prepare('SELECT * FROM banks WHERE id=?').get(intent.bankId);requireCondition(bank,'BANK_NOT_FOUND');
    members=db.prepare('SELECT u.* FROM bank_members m JOIN users u ON u.id=m.user_id WHERE m.bank_id=?').all(bank.id);
