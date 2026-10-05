@@ -128,7 +128,7 @@ test('expiration notification is queued once and transient Telegram failure can 
  const cipher=createPayloadCipher('ab'.repeat(32));
  assert.equal(expirePendingInvitations({db:f.db,cipher}),1);
  assert.equal(expirePendingInvitations({db:f.db,cipher}),0);
- const queued=f.db.prepare("SELECT idempotency_key,delivery_status FROM response_outbox WHERE idempotency_key IS NOT NULL").get();
+ const queued=f.db.prepare("SELECT id,idempotency_key,delivery_status FROM response_outbox WHERE idempotency_key IS NOT NULL").get();
  assert.equal(queued.idempotency_key,`invitation:${f.db.prepare('SELECT id FROM access_grants').get().id}:expired`);
  await deliverOutbox({db:f.db,cipher,log:()=>{},now:()=>Date.now()+60000,telegram:{call:async()=>{throw Object.assign(new Error('temporary'),{code:'NETWORK'});}}});
  assert.equal(f.db.prepare('SELECT delivery_status FROM response_outbox WHERE id=?').get(queued.id).delivery_status,'PENDING');
@@ -180,7 +180,7 @@ test('public IDs validate, remain immutable, and generated collisions retry', t 
 test('Telegram identity conflicts and suspended profiles leave tokens unused', t => {
   const f = fixture(t);
   const first = f.create(); f.redeem(first.token);
-  const second = f.create();
+  const second = f.create({ name: 'سارا' });
   assert.throws(() => f.redeem(second.token), { code: 'TELEGRAM_ID_CONFLICT' });
   f.db.prepare("UPDATE users SET status = 'SUSPENDED' WHERE id = ?").run(second.user.id);
   assert.throws(() => f.redeem(second.token, { senderTelegramId: '789' }), { code: 'TARGET_SUSPENDED' });
