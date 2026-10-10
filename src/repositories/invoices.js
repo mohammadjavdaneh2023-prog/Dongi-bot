@@ -3,7 +3,7 @@ import { requireCondition } from '../domain/errors.js';
 import { planAllocations } from '../domain/settlements.js';
 
 export function loadActiveInvoices(db) {
-  const invoices = db.prepare("SELECT id,lifecycle_status FROM invoices WHERE lifecycle_status = 'ACTIVE'").all();
+  const invoices = db.prepare("SELECT id,lifecycle_status,source_chat_id FROM invoices WHERE lifecycle_status = 'ACTIVE'").all();
   const entries = db.prepare("SELECT e.invoice_id,e.user_id,e.amount FROM invoice_entries e JOIN invoices i ON i.id=e.invoice_id WHERE i.lifecycle_status='ACTIVE'").all();
   const byInvoice = new Map(invoices.map(invoice => [invoice.id, { ...invoice, entries: [] }]));
   for (const entry of entries) byInvoice.get(entry.invoice_id).entries.push(entry);

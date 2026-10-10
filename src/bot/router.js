@@ -8,7 +8,7 @@ import { transaction } from '../infra/db/database.js';
 import { newTraceId } from '../infra/logging.js';
 import { buildInvoice } from '../domain/invoices.js';
 import { invoiceContext, saveInvoice, saveSettlement, loadActiveInvoices } from '../repositories/invoices.js';
-import { projectBalance, settlementPlan } from '../domain/balances.js';
+import { projectBalance, projectGroupBalance, projectCombinedGroupBalance, settlementPlan } from '../domain/balances.js';
 import { loadDetails } from '../repositories/details.js';
 import { applyNetting } from '../repositories/netting.js';
 import { changeInvoiceLifecycle } from '../repositories/lifecycle.js';
@@ -27,9 +27,32 @@ export function createRouter({ db, cipher, bot, config, log }) {
   // Logging failure must never turn a committed operation into a reported rollback.
   const safeLog = (...args) => { try { log(...args); } catch { process.stderr.write('LOG_WRITE_FAILED\n'); } };
   const render = (event, vars, role) => renderResponse(db, event, vars, role);
-  const queue = (updateId, chatId, text, invoiceId = null, replyMarkup, replyTo) => {
+  const queue = (updateId, chatId, text, invoiceId = null, replyMarkup, replyTo, parseMode) => {
     db.prepare('INSERT INTO response_outbox(update_id, encrypted_payload, invoice_id) VALUES (?, ?, ?)')
-      .run(updateId, cipher.encrypt({ chat_id: String(chatId), text, link_preview_options: { is_disabled: true },...(replyTo?{reply_parameters:{message_id:replyTo}}:{}),...(replyMarkup?{reply_markup:replyMarkup}:{}) }),invoiceId);
+      .run(updateId, cipher.encrypt({ chat_id: String(chatId), text, link_preview_options: { is_disabled: true },...(parseMode?{parse_mode:parseMode}:{}),...(replyTo?{reply_parameters:{message_id:replyTo}}:{}),...(replyMarkup?{reply_markup:replyMarkup}:{}) }),invoiceId);
+  };
+  const escapeHtml = value => String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
+  const formatReceipt = (invoice, creatorId, eventText, nettingCount = 0) => {
+    const amountText = value => value === 0 ? '0' : `${value > 0 ? '+' : '-'}${Math.abs(value).toLocaleString('en-US')}`;
+    const blocks = [`<b>${escapeHtml(eventText)}</b>`, `<b>🧾 #${invoice.public_ref} — ${escapeHtml(invoice.title)}</b>`];
+    for (const entry of invoice.entries) blocks.push(`• ${escapeHtml(entry.canonical_name)} <code>[${escapeHtml(entry.public_id)}]</code>\n  <code>${amountText(entry.amount)}</code> تومان`);
+    blocks.push('جمع: 0 ✅', `مبلغ فاکتور: <code>${invoice.gross_amount.toLocaleString('en-US')}</code> تومان`);
+    if (nettingCount) blocks.push(escapeHtml(render('NETTING_COMPLETED')));
+    const participants = invoice.entries.filter(entry => entry.user_id !== creatorId);
+    const links = participants.map(entry => {
+      const user = db.prepare('SELECT telegram_user_id FROM users WHERE id=?').get(entry.user_id);
+      return user?.telegram_user_id ? `<a href="tg://user?id=${encodeURIComponent(user.telegram_user_id)}">${escapeHtml(entry.canonical_name)}</a>` : null;
+    }).filter(Boolean);
+    if (links.length) blocks.push('🔔 حاضرین فاکتور:', ...links.map(link => `• ${link}`));
+    const chunks = [];
+    let current = '';
+    for (const block of blocks) {
+      const candidate = current ? `${current}\n\n${block}` : block;
+      if (candidate.length > 3300 && current) { chunks.push(current); current = block; }
+      else current = candidate;
+    }
+    if (current) chunks.push(current);
+    return chunks.map(text => ({ text, parseMode: 'HTML' }));
   };
 
   return function route(update, preparedInvoice) {
@@ -56,7 +79,7 @@ export function createRouter({ db, cipher, bot, config, log }) {
       db.prepare('INSERT INTO processed_updates(update_id, chat_id, message_id, trace_id, event, created_at) VALUES (?, ?, ?, ?, ?, ?)')
         .run(update.update_id, String(message.chat.id), message.message_id, traceId, event, Date.now());
       for (const response of responses) queue(update.update_id, response.chatId, response.text,response.invoiceId,response.replyMarkup,
-        String(response.chatId)===String(message.chat.id)?(message.response_to_message_id??message.message_id):undefined);
+        String(response.chatId)===String(message.chat.id)?(message.response_to_message_id??message.message_id):undefined,response.parseMode);
     };
 
     const execute = () => {
@@ -84,9 +107,7 @@ export function createRouter({ db, cipher, bot, config, log }) {
           const result=resolvePending(db,{...preparedInvoice,action:preparedInvoice.aiAction,message,traceId});
           const resultResponse=response(result.event);
           if(result.invoice){
-            resultResponse.responses[0].text+='\n#'+result.invoice.public_ref+'\n'+linesFor(result.invoice).join('\n');
-            resultResponse.responses[0].invoiceId=result.invoice.id;
-            if(result.nettingCount)resultResponse.responses[0].text+='\n'+render('NETTING_COMPLETED');
+            resultResponse.responses=formatReceipt(result.invoice,actor.id,render(result.event,{},role),result.nettingCount).map(item=>({...item,chatId:message.chat.id,invoiceId:result.invoice.id}));
           }
           return resultResponse;
         }
@@ -172,23 +193,36 @@ export function createRouter({ db, cipher, bot, config, log }) {
         for(let i=0;i<output.length;i+=3500) responses.push({chatId:message.chat.id,text:output.slice(i,i+3500),invoiceId:invoice.id});
         return {event:'DETAILS_READY',responses};
       }
-      if (/^(balance|settle-plan)$/i.test(command)) {
+      if (/^(balance(?:\s+group)?|settle-plan)$/i.test(command)) {
         if (preparedInvoice?.error) throw new DomainError(preparedInvoice.error, preparedInvoice.details);
         if (!preparedInvoice || preparedInvoice.updateId !== update.update_id || preparedInvoice.chatId !== String(message.chat.id)
-          || preparedInvoice.intent?.intent !== command.toLowerCase() || Date.now() - preparedInvoice.verifiedAt > 60000) throw new DomainError('MEMBERSHIP_CHECK_FAILED');
+          || preparedInvoice.intent?.intent !== (command.toLowerCase() === 'balance group' ? 'balance-group' : command.toLowerCase()) || Date.now() - preparedInvoice.verifiedAt > 60000) throw new DomainError('MEMBERSHIP_CHECK_FAILED');
         const ctx = invoiceContext(db, message);
         const user = ctx.users.find(item => item.id === ctx.actorId);
         if (!user || user.status === 'SUSPENDED') throw new DomainError('PERMISSION_DENIED');
         if (user.status === 'FROZEN' || ctx.groupFrozenIds.has(user.id)) throw new DomainError('ACTOR_FROZEN');
         if (!user.bot_started) throw new DomainError('USER_NOT_STARTED');
         if (!preparedInvoice.currentMemberIds.has(user.id)) throw new DomainError('USER_NOT_IN_GROUP');
-        const balance = projectBalance(loadActiveInvoices(db), ctx.users, preparedInvoice.currentMemberIds);
+        const invoices = loadActiveInvoices(db);
+        const balance = command.toLowerCase() === 'balance group'
+          ? projectGroupBalance(invoices, ctx.users, preparedInvoice.currentMemberIds, message.chat.id)
+          : command.toLowerCase() === 'balance'
+            ? projectCombinedGroupBalance(invoices, ctx.users, preparedInvoice.currentMemberIds, message.chat.id, preparedInvoice.sharedGroupMemberIds)
+            : projectBalance(invoices, ctx.users, preparedInvoice.currentMemberIds);
         const plan = command.toLowerCase() === 'settle-plan' ? settlementPlan(balance.rows) : null;
         const event = plan ? (plan.length ? 'SETTLEMENT_PLAN_READY' : 'NO_SETTLEMENT_NEEDED') : 'BALANCE_READY';
         const lines = plan ? plan.map(row => `${row.from_name} [${row.from}] → ${row.to_name} [${row.to}]: ${row.amount.toLocaleString('en-US')} تومان`)
           : balance.rows.map(row => `${row.name} [${row.public_id}]  ${row.amount > 0n ? '+' : ''}${row.amount.toLocaleString('en-US')}`);
+        if (!plan) lines.push(command.toLowerCase() === 'balance group'
+          ? 'دامنه: فقط فاکتورهای ثبت‌شده در همین گروه'
+          : command.toLowerCase() === 'balance'
+            ? 'دامنه: همین گروه به‌علاوهٔ گروه‌های مشترک، با سرشکن‌کردن اعضای بیرون از این گروه'
+            : 'دامنه: اعضای واجدشرایط همین گروه');
         if (!plan) lines.push('جمع: 0 تومان');
-        lines.push(`فاکتورهای لحاظ‌شده: ${balance.included}`, `فاکتورهای مرتبطِ خارج از تراز: ${balance.excluded}`);
+        if (Number.isSafeInteger(balance.groupsIncluded)) {
+          lines.push(`فاکتورهای گروه فعلی لحاظ‌شده: ${balance.included}`, `فاکتورهای مرتبطِ خارج از تراز: ${balance.excluded}`,
+            `گروه‌های مشترکِ لحاظ‌شده: ${balance.groupsIncluded}`);
+        } else lines.push(`فاکتورهای لحاظ‌شده: ${balance.included}`, `فاکتورهای مرتبطِ خارج از تراز: ${balance.excluded}`);
         const output = render(event) + '\n' + lines.join('\n');
         const responses = [];
         for (let i = 0; i < output.length; i += 3500) responses.push({ chatId: message.chat.id, text: output.slice(i, i + 3500) });
@@ -213,16 +247,9 @@ export function createRouter({ db, cipher, bot, config, log }) {
         const invoice = isSettlement ? saveSettlement(db, built, preparedInvoice.intent.against, message, financialContext.actorId, traceId)
           : saveInvoice(db, built, message, financialContext.actorId, traceId);
         const nettingCount=applyNetting(db,invoice.id,financialContext.actorId,traceId);
-        const amountText = value => value === 0 ? '0' : `${value > 0 ? '+' : '-'}${Math.abs(value).toLocaleString('en-US')}`;
-        const lines = [`🧾 #${invoice.public_ref} — ${invoice.title}`,
-          ...invoice.entries.map(entry => `${entry.canonical_name} [${entry.public_id}]  ${amountText(entry.amount)}`),
-          'جمع: 0 ✅', `مبلغ فاکتور: ${invoice.gross_amount.toLocaleString('en-US')} تومان`];
         const event = isSettlement ? 'SETTLEMENT_CREATED' : 'INVOICE_CREATED';
-        if(nettingCount) lines.push(render('NETTING_COMPLETED'));
-        const receipt = render(event,{},role) + '\n' + lines.join('\n');
-        // Plain text chunks preserve all participants when a receipt exceeds Telegram's limit.
-        const chunks = [];
-        for (let i = 0; i < receipt.length; i += 3500) chunks.push({ chatId: message.chat.id, text: receipt.slice(i, i + 3500),invoiceId:invoice.id });
+        const chunks = formatReceipt(invoice,financialContext.actorId,render(event,{},role),nettingCount)
+          .map(item=>({...item,chatId:message.chat.id,invoiceId:invoice.id}));
         return { event, responses: chunks };
       }
       if (/^user\b/i.test(command)) {

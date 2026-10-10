@@ -32,7 +32,7 @@ const errors = {
   PRIVATE_VIEW_READY:'اینم وضعیت خودت در دفتر دنگی:',
   PRIVATE_MENU_CLOSED:'منو بسته شد؛ برای بازکردنش /menu را بفرست.',
   PRIVATE_LIST_EMPTY:'اینجا فعلاً چیزی برای نمایش ندارم.',
-  PRIVATE_HELP:'از دکمه‌ها حساب و ریزحساب‌هایت را ببین. فاکتورهای من یعنی فاکتورهایی که خودت ثبت کرده‌ای؛ تاریخچه رخدادهای مرتبط با تو را دارد. برای جزئیات: #DONGI details #184. تراز خصوصی سراسری است؛ تراز گروه را با #DONGI balance در همان گروه بگیر.',
+  PRIVATE_HELP:'از دکمه‌ها حساب و ریزحساب‌هایت را ببین. فاکتورهای من یعنی فاکتورهایی که خودت ثبت کرده‌ای؛ تاریخچه رخدادهای مرتبط با تو را دارد. برای جزئیات: #DONGI details #184. تراز خصوصی سراسری است؛ در گروه #DONGI balance را برای تراز گروه‌های مشترک و #DONGI balance group را فقط برای فاکتورهای همان گروه بفرست.',
   OWNER_PROTECTED:'حساب Owner با این دستورها محدود نمی‌شود؛ چیزی تغییر نکرد.',
   USER_STATE_UNCHANGED:'این وضعیت از قبل برقرار است؛ تغییری انجام نشد.',
   USER_STATE_INVALID:'این تغییر با وضعیت فعلی سازگار نیست؛ برای حساب Suspended از user activate استفاده کن.',
@@ -104,7 +104,7 @@ export const catalog = {
   ...Object.fromEntries(Object.entries(errors).map(([key, template]) => [key, {
     variables: template.includes('{{trace_id}}') ? ['trace_id'] : [], templates: [template],
   }])),
-  HELP: { variables: [], templates: ['دستورهای آماده:\n/start در خصوصی: پروفایل\n#DONGI help: راهنما\n#DONGI user create "نام" [AB417]: فقط رئیس\n#DONGI alias AB417 add ممد: فقط رئیس\nفاکتور گروه:\n#DONGI invoice "غذا" 600000\nbetween: me AB417\n#DONGI balance: تراز گروه\n#DONGI settle-plan: پیشنهاد تسویه\nتسویه از طرف خودت:\n#DONGI settle 100000\nto: AB417'] },
+  HELP: { variables: [], templates: ['دستورهای آماده:\n/start در خصوصی: پروفایل\n#DONGI help: راهنما\n#DONGI user create "نام" [AB417]: فقط رئیس\n#DONGI alias AB417 add ممد: فقط رئیس\nفاکتور گروه:\n#DONGI invoice "غذا" 600000\nbetween: me AB417\n#DONGI balance: تراز گروه‌های مشترک با اعضای گروه فعلی\n#DONGI balance group: فقط فاکتورهای ثبت‌شده در همین گروه\n#DONGI settle-plan: پیشنهاد تسویه\nتسویه از طرف خودت:\n#DONGI settle 100000\nto: AB417'] },
   PROFILE: { variables: ['name', 'public_id', 'status'], templates: ['اینم شناسنامه‌ات پیش من:\n{{name}} [{{public_id}}]\nوضعیت: {{status}}'] },
   USER_CREATED: { variables: ['name', 'public_id'], templates: ['{{name}} [{{public_id}}] رفت توی دفتر آدم‌ها. دعوت رو توی خصوصی رئیس می‌فرستم.'] },
   USER_INVITATION: { variables: ['name', 'public_id', 'link', 'expires'], templates: ['دعوت {{name}} [{{public_id}}]:\n{{link}}\nاعتبار تا: {{expires}}\nاین لینک فقط برای خود اون آدمه؛ به خودش برسون.'] },
@@ -121,7 +121,7 @@ export function validTemplate(event, template) {
     && [...names].every(name => spec.variables.includes(name))
     && spec.variables.every(name => names.has(name));
 }
-catalog.HELP.templates=['دستورهای دنگی:\n#DONGI help: راهنما\n/start و /my در خصوصی: حساب و پروفایل\n#DONGI user create "نام": ساخت پروفایل، فقط Owner\n#DONGI user invite AB417: دعوت تازه، فقط Owner\n#DONGI alias AB417 add ممد: نام مستعار، Owner یا ادمین گروه\n#DONGI invoice "غذا" 600\nbetween: me AB417\n#DONGI balance: تراز گروه\n#DONGI settle-plan: پیشنهاد تسویه\n#DONGI settle 100\nto: AB417\n#DONGI details #184: جزئیات\n#DONGI void #184 / #DONGI restore #184: ابطال/بازگردانی\n#DONGI freeze AB417 / #DONGI unfreeze AB417: محدودیت\nهی دنگی + درخواست مالی: پیش‌نمایش و تأیید\nبانک: #DONGI bank report B1؛ قالب ساخت و شارژ در راهنمای نسخه.\nهی دنگی با #exact در انتها: بدون حدس مقیاس مبلغ.\nخصوصی: /my banks برای بانک‌های من.\nبرای گپ به پیام من Reply کن؛ گاهی جواب کوتاه می‌دهم. شناسه‌ها و شماره‌ها نمونه‌اند.'];
+catalog.HELP.templates=['دستورهای دنگی:\n#DONGI help: راهنما\n/start و /my در خصوصی: حساب و پروفایل\n#DONGI user create "نام": ساخت پروفایل، فقط Owner\n#DONGI user invite AB417: دعوت تازه، فقط Owner\n#DONGI alias AB417 add ممد: نام مستعار، Owner یا ادمین گروه\n#DONGI invoice "غذا" 600\nbetween: me AB417\n#DONGI balance: تراز گروه‌های مشترک با اعضای گروه فعلی\n#DONGI balance group: فقط فاکتورهای ثبت‌شده در همین گروه\n#DONGI settle-plan: پیشنهاد تسویه\n#DONGI settle 100\nto: AB417\n#DONGI details #184: جزئیات\n#DONGI void #184 / #DONGI restore #184: ابطال/بازگردانی\n#DONGI freeze AB417 / #DONGI unfreeze AB417: محدودیت\nهی دنگی + درخواست مالی: پیش‌نمایش و تأیید\nبانک: #DONGI bank report B1؛ قالب ساخت و شارژ در راهنمای نسخه.\nهی دنگی با #exact در انتها: بدون حدس مقیاس مبلغ.\nخصوصی: /my banks برای بانک‌های من.\nبرای گپ به پیام من Reply کن؛ گاهی جواب کوتاه می‌دهم. شناسه‌ها و شماره‌ها نمونه‌اند.'];
 
 for(const [event,templates] of Object.entries(extraSeeds)) {
   if(catalog[event])catalog[event].templates.push(...templates);

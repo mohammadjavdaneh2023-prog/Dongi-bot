@@ -15,7 +15,9 @@
 - `/my balance|open|history|invoices|profile|aliases|banks|help [page]`
 - `#DONGI help`
 - `#DONGI user create "Name" [PUBLIC_ID]` و `#DONGI user invite PUBLIC_ID`
-- `#DONGI invoice ...`, `#DONGI settle ...`, `#DONGI balance`, `#DONGI settle-plan`
+- `#DONGI invoice ...`, `#DONGI settle ...`, `#DONGI balance`, `#DONGI balance group`, `#DONGI settle-plan`
+- `#DONGI balance group` uses active invoices created in the current chat. `#DONGI balance` adds the current group's balance to zero-sum projections from other chats where Telegram confirms at least two current group participants; it removes outside participants by applying an equal offset to the shared participants, with a deterministic one-toman remainder when division is uneven.
+- Invoice and settlement receipts use a compact one-person-per-row layout and mention linked participants other than the creator.
 - `#DONGI details [#REF]`, `#DONGI void [#REF]`, `#DONGI restore [#REF]`
 - `#DONGI alias PUBLIC_ID add|remove ALIAS`
 - `#DONGI freeze|unfreeze PUBLIC_ID`
